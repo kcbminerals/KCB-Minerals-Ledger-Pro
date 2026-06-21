@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KCB Minerals Ledger Pro</title>
+  <meta name="theme-color" content="#2563eb" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="toast" class="toast hidden"></div>
+  <div id="loadingOverlay" class="loading-overlay hidden">
+    <div class="loader-card">
+      <div class="loader"></div>
+      <p id="loadingText">Loading...</p>
+    </div>
+  </div>
+
+  <aside class="sidebar no-print">
+    <div class="brand">
+      <div class="brand-logo">K</div>
+      <div>
+        <h1>KCB Minerals</h1>
+        <p>Cloud Ledger Pro</p>
+      </div>
+    </div>
+
+    <div class="sync-card">
+      <span class="pulse"></span>
+      <span id="syncIndicator">Ready</span>
+    </div>
+
+    <nav class="nav-list">
+      <button id="nav-dashboard" class="nav-btn active" onclick="switchTab('dashboard')">📊 Dashboard</button>
+      <button id="nav-logentry" class="nav-btn" onclick="switchTab('logentry')">📝 Log Entry</button>
+      <button id="nav-statement" class="nav-btn" onclick="switchTab('statement')">📑 Statement</button>
+      <button id="nav-register" class="nav-btn" onclick="switchTab('register')">🚛 Registration</button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <button class="btn btn-primary w-full" onclick="fetchCloudData()">🔄 Sync Drive</button>
+      <button class="btn btn-secondary w-full mt-2" onclick="toggleDarkMode()">🌙 Dark Mode</button>
+    </div>
+  </aside>
+
+  <main class="app-shell">
+    <header class="topbar no-print">
+      <div>
+        <h2 id="topBarContextTitle">Dashboard</h2>
+        <p>India Edition • Google Drive Cloud Sync</p>
+      </div>
+      <div class="top-actions">
+        <button class="btn btn-secondary" onclick="exportExcel()">📊 Excel</button>
+        <button class="btn btn-secondary" onclick="exportPDF()">📄 PDF</button>
+        <button class="btn btn-primary" onclick="fetchCloudData()">🔄 Sync</button>
+      </div>
+    </header>
+
+    <section id="page-dashboard" class="tab-page page-space">
+      <div class="hero-card">
+        <div>
+          <h1>📊 Analytics Dashboard</h1>
+          <p>Distributor-wise jars, revenue, payments and outstanding balance.</p>
+        </div>
+        <div class="hero-actions">
+          <select id="reportFilterDistributor" class="input" onchange="onDistributorFilterChange()">
+            <option value="all">All Distributors</option>
+          </select>
+          <div class="segmented">
+            <button id="btnReportDaily" onclick="switchReportPeriod('daily')" class="active">Daily</button>
+            <button id="btnReportWeekly" onclick="switchReportPeriod('weekly')">Weekly</button>
+            <button id="btnReportMonthly" onclick="switchReportPeriod('monthly')">Monthly</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card blue"><span>Jars Delivered</span><strong id="repJars">0</strong><small>Selected period</small></div>
+        <div class="stat-card green"><span>Total Revenue</span><strong id="repEarnings">₹0.00</strong><small>Billing value</small></div>
+        <div class="stat-card amber"><span>Payments</span><strong id="repPayments">₹0.00</strong><small>Collected amount</small></div>
+        <div class="stat-card red"><span>Outstanding</span><strong id="repNet">₹0.00</strong><small>Revenue - payments</small></div>
+      </div>
+
+      <div class="grid xl:grid-cols-2 gap-6">
+        <div class="card"><h3>Revenue / Payments / Outstanding</h3><canvas id="revenueChart" height="145"></canvas></div>
+        <div class="card"><h3>Collection Overview</h3><canvas id="paymentChart" height="145"></canvas></div>
+      </div>
+
+      <div class="card">
+        <div class="section-title"><h3>Distributor Overview</h3><button class="btn btn-secondary" onclick="switchTab('statement')">Open Statement</button></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Distributor</th><th>Vehicle</th><th class="right">Jars</th><th class="right">Bill</th><th class="right">Paid</th><th class="right">Outstanding</th></tr></thead>
+            <tbody id="dashboardSummaryRows"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="page-logentry" class="tab-page page-space hidden">
+      <div class="grid lg:grid-cols-3 gap-6">
+        <div class="card">
+          <h3 id="txFormTitle">📝 New Transaction</h3>
+          <div class="segmented full mb-4">
+            <button id="tabLoad" onclick="setEntryType('load')" class="active" type="button">🚛 Load Jars</button>
+            <button id="tabPayment" onclick="setEntryType('payment')" type="button">💵 Payment</button>
+          </div>
+          <form id="txForm" class="form-stack">
+            <label>Vehicle & Distributor<select id="txVehicle" class="input" required></select></label>
+            <label>Date & Time<input id="txDateTime" class="input" type="datetime-local" /></label>
+            <label id="divJarInput">Number of Jars<input id="txJars" class="input" type="number" min="1" placeholder="0" /></label>
+            <label id="divPaymentInput" class="hidden">Payment Amount ₹<input id="txAmount" class="input" type="number" step="0.01" min="0.01" placeholder="0.00" /></label>
+            <button id="txSubmitBtn" class="btn btn-primary w-full" type="submit">Submit Load</button>
+          </form>
+        </div>
+        <div class="card"><h3>Today's Summary</h3><div class="mini-list"><p><span>Jars Loaded</span><b id="todayLoads">0</b></p><p><span>Payments</span><b id="todayPayments">₹0.00</b></p><p><span>Net Outstanding</span><b id="todayOutstanding">₹0.00</b></p></div></div>
+        <div class="card"><h3>System Status</h3><div class="mini-list"><p><span>Cloud</span><b class="green-text">Online</b></p><p><span>Records</span><b id="recordCount">0</b></p><p><span>Vehicles</span><b id="statusFleetCount">0</b></p></div></div>
+      </div>
+
+      <div class="card">
+        <div class="section-title"><h3>📋 Transaction History</h3><input id="logSearchBar" class="input max-w-md" oninput="renderAuditTrail()" placeholder="Search vehicle / distributor..." /></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Date</th><th>Vehicle / Distributor</th><th>Type</th><th class="right">Jars</th><th class="right">Rate</th><th class="right">Amount</th><th class="center">Action</th></tr></thead>
+            <tbody id="auditTrailRows"></tbody>
+          </table>
+        </div>
+        <div id="noDataAlert" class="empty hidden">No matching records found.</div>
+      </div>
+    </section>
+
+    <section id="page-statement" class="tab-page page-space hidden">
+      <div class="hero-card">
+        <div><h1>📑 Customer Statement</h1><p>Complete vehicle and distributor ledger.</p></div>
+        <div class="hero-actions"><select id="statementDistributor" class="input" onchange="changeStatementDistributor()"><option value="all">All Distributors</option></select><button class="btn btn-secondary" onclick="window.print()">🖨 Print</button></div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat-card blue"><span>Total Jars</span><strong id="stTotalJars">0</strong></div>
+        <div class="stat-card green"><span>Total Bill</span><strong id="stTotalBill">₹0.00</strong></div>
+        <div class="stat-card amber"><span>Total Paid</span><strong id="stTotalPaid">₹0.00</strong></div>
+        <div class="stat-card red"><span>Outstanding</span><strong id="stOutstanding">₹0.00</strong></div>
+      </div>
+      <div class="card print-area" id="statementArea">
+        <div class="print-header"><h2>KCB Minerals Ledger Statement</h2><p id="statementPrintSub">All Distributors</p></div>
+        <div class="table-wrap"><table><thead><tr><th>Date</th><th>Distributor</th><th>Vehicle</th><th>Type</th><th class="right">Jars</th><th class="right">Rate</th><th class="right">Amount</th><th class="right">Running Balance</th></tr></thead><tbody id="detailedDistributorRows"></tbody></table></div>
+      </div>
+    </section>
+
+    <section id="page-register" class="tab-page page-space hidden">
+      <div class="hero-card"><div><h1>🚛 Fleet Registration</h1><p>Manage vehicle, distributor and rate profiles.</p></div><button class="btn btn-secondary" onclick="resetRegistrationForm()">➕ New Vehicle</button></div>
+      <div class="grid lg:grid-cols-3 gap-6">
+        <div class="card">
+          <h3 id="regFormTitle">Register Vehicle</h3>
+          <form id="vehicleForm" class="form-stack">
+            <label>Vehicle No.<input id="cfgVehicle" class="input uppercase" required placeholder="KA-01-AB-1234" /></label>
+            <label>Distributor Name<input id="cfgDistributorName" class="input" required placeholder="Distributor name" /></label>
+            <label>Mobile No.<input id="cfgDistributorPhone" class="input" required placeholder="9876543210" /></label>
+            <label>Rate Per Jar ₹<input id="cfgRate" class="input" type="number" step="0.01" min="0" required placeholder="40.00" /></label>
+            <div class="grid grid-cols-2 gap-3"><button class="btn btn-primary" type="submit">💾 Save</button><button id="btnCancelRegEdit" class="btn btn-secondary hidden" type="button" onclick="resetRegistrationForm()">Cancel</button></div>
+          </form>
+        </div>
+        <div class="card lg:col-span-2">
+          <div class="section-title"><h3>Registered Fleet</h3><input id="vehicleSearch" class="input max-w-md" oninput="renderVehicleRatesList()" placeholder="Search vehicle or distributor..." /></div>
+          <div id="vehicleRatesList" class="vehicle-grid"></div>
+        </div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat-card blue"><span>Vehicles</span><strong id="fleetCount">0</strong></div>
+        <div class="stat-card green"><span>Distributors</span><strong id="distributorCount">0</strong></div>
+        <div class="stat-card amber"><span>Average Rate</span><strong id="avgRate">₹0.00</strong></div>
+        <div class="stat-card green"><span>Cloud Status</span><strong>Online</strong></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
