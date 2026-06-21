@@ -7,6 +7,12 @@ let activeReportPeriod = "daily";
 let activeTab = "dashboard";
 let revenueChart = null;
 let paymentChart = null;
+let currentUser = null;
+
+const DEFAULT_USERS = [
+  { username: "admin", password: "admin123", role: "admin" },
+  { username: "user", password: "user123", role: "user" }
+];
 
 const $ = id => document.getElementById(id);
 
@@ -20,19 +26,29 @@ function showToast(message, type = "success") {
 }
 
 function showLoading(text = "Loading...") {
-  $("loadingText").textContent = text;
-  $("loadingOverlay").classList.remove("hidden");
-  setSync("⌛ " + text, "working");
+  const overlay = $("loadingOverlay");
+  if ($("loadingText")) $("loadingText").textContent = text;
+  if (overlay) overlay.classList.remove("hidden");
+  setSync("⌛ " + text);
 }
 
 function hideLoading(text = "Ready") {
-  $("loadingOverlay").classList.add("hidden");
-  setSync("🟢 " + text, "ok");
+  const overlay = $("loadingOverlay");
+  if (overlay) overlay.classList.add("hidden");
+  setSync("🟢 " + text);
 }
 
 function setSync(text) {
   const el = $("syncIndicator");
   if (el) el.textContent = text;
+}
+
+function startQuietSync(text = "Syncing with Drive...") {
+  setSync("⌛ " + text);
+}
+
+function finishQuietSync(text = "Connected") {
+  setSync("🟢 " + text);
 }
 
 function formatINR(value) {
@@ -56,45 +72,180 @@ function toggleDarkMode() {
   updateDashboardCharts();
 }
 
+function getUsers() {
+  const saved = localStorage.getItem("kcb_users");
+  if (!saved) {
+    localStorage.setItem("kcb_users", JSON.stringify(DEFAULT_USERS));
+    return [...DEFAULT_USERS];
+  }
+  try {
+    const parsed = JSON.parse(saved);
+    return Array.isArray(parsed) && parsed.length ? parsed : [...DEFAULT_USERS];
+  } catch {
+    return [...DEFAULT_USERS];
+  }
+}
+
+function saveUsers(users) {
+  localStorage.setItem("kcb_users", JSON.stringify(users));
+}
+
+function isAdmin() {
+  return currentUser?.role === "admin";
+}
+
+function allowedPages() {
+  return isAdmin() ? ["dashboard", "logentry", "statement", "register", "users"] : ["logentry", "register"];
+}
+
+function canOpenPage(page) {
+  return allowedPages().includes(page);
+}
+
+function applyAccessControl() {
+  document.body.classList.toggle("role-admin", isAdmin());
+  document.body.classList.toggle("role-user", !isAdmin());
+  const allowed = allowedPages();
+  ["dashboard", "logentry", "statement", "register", "users"].forEach(page => {
+    const btn = $("nav-" + page);
+    if (btn) btn.classList.toggle("hidden", !allowed.includes(page));
+  });
+  const name = currentUser?.username || "Guest";
+  const role = currentUser?.role || "-";
+  if ($("topUserName")) $("topUserName").textContent = name;
+  if ($("topUserRole")) $("topUserRole").textContent = role;
+  if ($("sidebarUserName")) $("sidebarUserName").textContent = name;
+  if ($("sidebarUserRole")) $("sidebarUserRole").textContent = role;
+  renderUserManager();
+}
+
+function loginUser(username, password) {
+  const user = getUsers().find(u => u.username === username && u.password === password);
+  if (!user) {
+    showToast("Invalid username or password", "error");
+    return false;
+  }
+  currentUser = { username: user.username, role: user.role };
+  localStorage.setItem("kcb_current_user", JSON.stringify(currentUser));
+  document.body.classList.remove("auth-locked");
+  applyAccessControl();
+  switchTab(isAdmin() ? "dashboard" : "logentry");
+  fetchCloudData(false);
+  showToast(`Welcome ${currentUser.username}`);
+  return true;
+}
+
+function logoutUser() {
+  currentUser = null;
+  localStorage.removeItem("kcb_current_user");
+  document.body.classList.add("auth-locked");
+  document.body.classList.remove("role-admin", "role-user");
+  if ($("loginPassword")) $("loginPassword").value = "";
+  showToast("Logged out");
+}
+
+function restoreLogin() {
+  getUsers();
+  try {
+    const saved = JSON.parse(localStorage.getItem("kcb_current_user") || "null");
+    if (saved?.username && saved?.role) {
+      currentUser = saved;
+      document.body.classList.remove("auth-locked");
+      applyAccessControl();
+      return true;
+    }
+  } catch {}
+  document.body.classList.add("auth-locked");
+  return false;
+}
+
+function renderUserManager() {
+  const rows = $("usersRows");
+  if (!rows || !isAdmin()) return;
+  rows.innerHTML = "";
+  getUsers().forEach(u => {
+    const disabled = u.username === currentUser?.username ? "disabled" : "";
+    rows.insertAdjacentHTML("beforeend", `<tr><td><b>${escapeHTML(u.username)}</b></td><td>${escapeHTML(u.role)}</td><td class="center"><button class="btn btn-red" ${disabled} onclick="deleteUserAccount('${escapeHTML(u.username)}')">Delete</button></td></tr>`);
+  });
+}
+
+function saveUserAccount() {
+  if (!isAdmin()) return showToast("Only admin can manage users", "error");
+  const username = $("userUsername").value.trim();
+  const password = $("userPassword").value.trim();
+  const role = $("userRole").value;
+  if (!username || !password) return showToast("Enter username and password", "error");
+  let users = getUsers().filter(u => u.username !== username);
+  users.push({ username, password, role });
+  saveUsers(users);
+  $("userForm").reset();
+  renderUserManager();
+  showToast("User saved");
+}
+
+function deleteUserAccount(username) {
+  if (!isAdmin()) return showToast("Only admin can delete users", "error");
+  if (username === currentUser?.username) return showToast("You cannot delete the logged-in user", "error");
+  if (!confirm(`Delete user ${username}?`)) return;
+  saveUsers(getUsers().filter(u => u.username !== username));
+  renderUserManager();
+  showToast("User deleted");
+}
+
+function resetDefaultUsers() {
+  if (!isAdmin()) return;
+  if (!confirm("Reset users to default admin/user accounts?")) return;
+  saveUsers([...DEFAULT_USERS]);
+  renderUserManager();
+  showToast("Default users restored");
+}
+
 function switchTab(tabName) {
+  if (!currentUser) return;
+  if (!canOpenPage(tabName)) {
+    showToast("You do not have access to this page", "error");
+    tabName = allowedPages()[0];
+  }
   activeTab = tabName;
   document.querySelectorAll(".tab-page").forEach(el => el.classList.add("hidden"));
   $("page-" + tabName)?.classList.remove("hidden");
-  ["dashboard","logentry","statement","register"].forEach(name => $("nav-" + name)?.classList.toggle("active", name === tabName));
-  const titles = { dashboard:"Dashboard", logentry:"Log Transactions", statement:"Customer Statement", register:"Fleet Registration" };
-  $("topBarContextTitle").textContent = titles[tabName] || "KCB Minerals";
+  ["dashboard","logentry","statement","register","users"].forEach(name => $("nav-" + name)?.classList.toggle("active", name === tabName));
+  const titles = { dashboard:"Dashboard", logentry:"Log Transactions", statement:"Customer Statement", register:"Fleet Registration", users:"Admin & Users" };
+  if ($("topBarContextTitle")) $("topBarContextTitle").textContent = titles[tabName] || "KCB Minerals";
   if (tabName === "dashboard") setTimeout(updateDashboardCharts, 100);
   if (tabName === "statement") renderDetailedDistributorReport();
+  if (tabName === "users") renderUserManager();
 }
 
-async function fetchCloudData() {
-  showLoading("Syncing with Google Drive...");
+async function fetchCloudData(showToastOnDone = true) {
+  if (!currentUser) return;
+  startQuietSync("Syncing with Drive...");
   try {
     const res = await fetch(CLOUD_API_URL, { method: "GET", mode: "cors" });
     if (!res.ok) throw new Error("Network error");
     const data = await res.json();
     applyCloudData(data);
-    hideLoading("Connected");
-    showToast("Cloud sync completed");
+    finishQuietSync("Connected");
+    if (showToastOnDone) showToast("Cloud sync completed");
   } catch (err) {
     console.warn(err);
-    fetchCloudDataFallback();
+    fetchCloudDataFallback(showToastOnDone);
   }
 }
 
-function fetchCloudDataFallback() {
+function fetchCloudDataFallback(showToastOnDone = true) {
   const cb = "kcb_jsonp_" + Date.now();
   const script = document.createElement("script");
   window[cb] = data => {
     applyCloudData(data);
-    hideLoading("Connected via fallback");
-    showToast("Cloud sync completed");
+    finishQuietSync("Connected via fallback");
+    if (showToastOnDone) showToast("Cloud sync completed");
     delete window[cb];
     script.remove();
   };
   script.onerror = () => {
-    hideLoading("Offline");
-    showToast("Cloud sync failed. Check Apps Script deployment.", "error");
+    finishQuietSync("Offline");
+    if (showToastOnDone) showToast("Cloud sync failed. Check Apps Script deployment.", "error");
     loadLocalBackup();
   };
   script.src = CLOUD_API_URL + (CLOUD_API_URL.includes("?") ? "&" : "?") + "callback=" + cb;
@@ -139,7 +290,7 @@ async function postToCloud(payload) {
     await fetch(CLOUD_API_URL, { method:"POST", mode:"no-cors", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload) });
     hideLoading("Saved");
     showToast("Saved successfully");
-    setTimeout(fetchCloudData, 1200);
+    setTimeout(() => fetchCloudData(false), 1200);
   } catch (err) {
     console.warn(err);
     postToCloudFallback(payload);
@@ -163,10 +314,11 @@ function postToCloudFallback(payload) {
   form.submit();
   hideLoading("Saved");
   showToast("Data sent to cloud");
-  setTimeout(() => { form.remove(); iframe.remove(); fetchCloudData(); }, 1500);
+  setTimeout(() => { form.remove(); iframe.remove(); fetchCloudData(false); }, 1500);
 }
 
 function renderAll() {
+  applyAccessControl();
   renderDropdowns();
   renderVehicleRatesList();
   renderDashboardSummary();
@@ -282,6 +434,7 @@ function renderDashboardSummary() {
 }
 
 function selectDistributor(dist) {
+  if (!isAdmin()) return showToast("Only admin can open statements", "error");
   if (dist && dist !== "N/A") {
     $("reportFilterDistributor").value = dist;
     $("statementDistributor").value = dist;
@@ -304,26 +457,87 @@ function changeStatementDistributor() {
   renderDetailedDistributorReport();
 }
 
+function getStatementPeriod() {
+  const fromValue = $("statementFromDate")?.value || "";
+  const toValue = $("statementToDate")?.value || "";
+
+  const from = fromValue ? new Date(fromValue + "T00:00:00").getTime() : null;
+  const to = toValue ? new Date(toValue + "T23:59:59.999").getTime() : null;
+
+  return { fromValue, toValue, from, to };
+}
+
+function txMatchesStatementFilters(tx) {
+  const selected = $("statementDistributor")?.value || $("reportFilterDistributor")?.value || "all";
+  const dist = vehicles[tx.vehicle]?.distributorName || "N/A";
+  const period = getStatementPeriod();
+  const timestamp = Number(tx.timestamp || 0);
+
+  if (selected !== "all" && dist !== selected) return false;
+  if (period.from !== null && timestamp < period.from) return false;
+  if (period.to !== null && timestamp > period.to) return false;
+
+  return true;
+}
+
+function statementPeriodLabel() {
+  const period = getStatementPeriod();
+  if (!period.fromValue && !period.toValue) return "All Time";
+  if (period.fromValue && period.toValue) return `${period.fromValue} to ${period.toValue}`;
+  if (period.fromValue) return `From ${period.fromValue}`;
+  return `Up to ${period.toValue}`;
+}
+
+function clearStatementPeriod() {
+  if ($("statementFromDate")) $("statementFromDate").value = "";
+  if ($("statementToDate")) $("statementToDate").value = "";
+  renderDetailedDistributorReport();
+  showToast("Statement period cleared");
+}
+
+function getFilteredStatementTransactions() {
+  return transactions
+    .filter(txMatchesStatementFilters)
+    .sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0));
+}
+
 function renderDetailedDistributorReport() {
   const selected = $("statementDistributor")?.value || $("reportFilterDistributor")?.value || "all";
   const rows = $("detailedDistributorRows");
   if (!rows) return;
+
   rows.innerHTML = "";
+
   let running = 0, totalJars = 0, totalBill = 0, totalPaid = 0;
-  const filtered = transactions.filter(t => selected === "all" || (vehicles[t.vehicle]?.distributorName || "N/A") === selected).sort((a,b) => a.timestamp - b.timestamp);
+  const filtered = getFilteredStatementTransactions();
+
   filtered.forEach(t => {
     const dist = vehicles[t.vehicle]?.distributorName || "N/A";
     const amount = Number(t.financialValue || 0);
-    if (t.type === "load") { running += amount; totalBill += amount; totalJars += Number(t.jars || 0); }
-    else { running -= amount; totalPaid += amount; }
+
+    if (t.type === "load") {
+      running += amount;
+      totalBill += amount;
+      totalJars += Number(t.jars || 0);
+    } else {
+      running -= amount;
+      totalPaid += amount;
+    }
+
     rows.insertAdjacentHTML("beforeend", `<tr><td>${cleanFormatDate(t.timestamp)}</td><td>${escapeHTML(dist)}</td><td>${escapeHTML(t.vehicle)}</td><td>${t.type === "load" ? '<span class="badge badge-load">LOAD</span>' : '<span class="badge badge-payment">PAYMENT</span>'}</td><td class="right">${t.jars || "-"}</td><td class="right">${t.rateApplied ? formatINR(t.rateApplied) : "-"}</td><td class="right">${t.type === "payment" ? "-" : "+"}${formatINR(amount)}</td><td class="right"><b>${formatINR(running)}</b></td></tr>`);
   });
-  if (!filtered.length) rows.innerHTML = `<tr><td colspan="8" class="center">No records found.</td></tr>`;
+
+  if (!filtered.length) {
+    rows.innerHTML = `<tr><td colspan="8" class="center">No records found for the selected distributor/period.</td></tr>`;
+  }
+
   $("stTotalJars").textContent = totalJars;
   $("stTotalBill").textContent = formatINR(totalBill);
   $("stTotalPaid").textContent = formatINR(totalPaid);
   $("stOutstanding").textContent = formatINR(totalBill - totalPaid);
-  $("statementPrintSub").textContent = selected === "all" ? "All Distributors" : selected;
+
+  const party = selected === "all" ? "All Distributors" : selected;
+  $("statementPrintSub").textContent = `${party} • Period: ${statementPeriodLabel()}`;
 }
 
 function renderAuditTrail() {
@@ -337,7 +551,8 @@ function renderAuditTrail() {
   body.innerHTML = "";
   filtered.forEach(t => {
     const dist = vehicles[t.vehicle]?.distributorName || "N/A";
-    body.insertAdjacentHTML("beforeend", `<tr><td>${cleanFormatDate(t.timestamp)}</td><td><b>${escapeHTML(t.vehicle)}</b><br><small>${escapeHTML(dist)}</small></td><td>${t.type === "load" ? '<span class="badge badge-load">LOAD</span>' : '<span class="badge badge-payment">PAYMENT</span>'}</td><td class="right">${t.jars || "-"}</td><td class="right">${t.rateApplied ? formatINR(t.rateApplied) : "-"}</td><td class="right"><b>${formatINR(t.financialValue)}</b></td><td class="center"><button class="btn btn-secondary" onclick="inlineEditTx(${t.id})">Edit</button> <button class="btn btn-red" onclick="deleteTx(${t.id})">Delete</button></td></tr>`);
+    const actions = isAdmin() ? `<button class="btn btn-secondary" onclick="inlineEditTx(${t.id})">Edit</button> <button class="btn btn-red" onclick="deleteTx(${t.id})">Delete</button>` : `<span class="badge">View only</span>`;
+    body.insertAdjacentHTML("beforeend", `<tr><td>${cleanFormatDate(t.timestamp)}</td><td><b>${escapeHTML(t.vehicle)}</b><br><small>${escapeHTML(dist)}</small></td><td>${t.type === "load" ? '<span class="badge badge-load">LOAD</span>' : '<span class="badge badge-payment">PAYMENT</span>'}</td><td class="right">${t.jars || "-"}</td><td class="right">${t.rateApplied ? formatINR(t.rateApplied) : "-"}</td><td class="right"><b>${formatINR(t.financialValue)}</b></td><td class="center">${actions}</td></tr>`);
   });
   $("recordCount").textContent = filtered.length;
   $("noDataAlert")?.classList.toggle("hidden", filtered.length > 0);
@@ -353,6 +568,7 @@ function setEntryType(type) {
 }
 
 function inlineEditTx(id) {
+  if (!isAdmin()) return showToast("Only admin can edit old transactions", "error");
   const tx = transactions.find(t => Number(t.id) === Number(id));
   if (!tx) return;
   switchTab("logentry");
@@ -368,6 +584,7 @@ function inlineEditTx(id) {
 }
 
 function deleteTx(id) {
+  if (!isAdmin()) return showToast("Only admin can delete transactions", "error");
   if (confirm("Delete this transaction?")) postToCloud({ action:"deleteTx", id:Number(id) });
 }
 
@@ -429,15 +646,39 @@ function resetRegistrationForm() {
 }
 
 function exportExcel() {
+  if (!isAdmin()) return showToast("Only admin can export reports", "error");
   if (typeof XLSX === "undefined") return showToast("Excel library not loaded", "error");
-  const rows = transactions.map(t => ({ Date: cleanFormatDate(t.timestamp), Distributor: vehicles[t.vehicle]?.distributorName || "N/A", Vehicle: t.vehicle, Type: t.type, Jars: t.jars, Rate: t.rateApplied, Amount: t.financialValue }));
+
+  const allRows = transactions.map(t => ({
+    Date: cleanFormatDate(t.timestamp),
+    Distributor: vehicles[t.vehicle]?.distributorName || "N/A",
+    Vehicle: t.vehicle,
+    Type: t.type,
+    Jars: t.jars,
+    Rate: t.rateApplied,
+    Amount: t.financialValue
+  }));
+
+  const statementRows = getFilteredStatementTransactions().map(t => ({
+    Date: cleanFormatDate(t.timestamp),
+    Distributor: vehicles[t.vehicle]?.distributorName || "N/A",
+    Vehicle: t.vehicle,
+    Type: t.type,
+    Jars: t.jars,
+    Rate: t.rateApplied,
+    Amount: t.financialValue,
+    Period: statementPeriodLabel()
+  }));
+
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Transactions");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(statementRows), "Statement_Filtered");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(allRows), "All_Transactions");
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(Object.keys(vehicles).map(v => ({ Vehicle:v, ...vehicles[v] }))), "Vehicles");
   XLSX.writeFile(wb, "KCB_Minerals_Ledger.xlsx");
 }
 
 async function exportPDF() {
+  if (!isAdmin()) return showToast("Only admin can export reports", "error");
   if (!window.jspdf || typeof html2canvas === "undefined") return showToast("PDF library not loaded", "error");
   switchTab("statement");
   await new Promise(r => setTimeout(r, 200));
@@ -452,6 +693,16 @@ async function exportPDF() {
 }
 
 function bindForms() {
+  $("loginForm")?.addEventListener("submit", e => {
+    e.preventDefault();
+    loginUser($("loginUsername").value.trim(), $("loginPassword").value);
+  });
+
+  $("userForm")?.addEventListener("submit", e => {
+    e.preventDefault();
+    saveUserAccount();
+  });
+
   $("vehicleForm").addEventListener("submit", e => {
     e.preventDefault();
     const vehicle = $("cfgVehicle").value.trim().toUpperCase();
@@ -459,7 +710,7 @@ function bindForms() {
     const distributorPhone = $("cfgDistributorPhone").value.trim();
     const rate = Number($("cfgRate").value);
     if (!vehicle || !distributorName || !rate && rate !== 0) return showToast("Fill all vehicle fields", "error");
-    postToCloud({ action:"saveVehicle", vehicle, distributorName, distributorPhone, rate });
+    postToCloud({ action:"saveVehicle", vehicle, distributorName, distributorPhone, rate, updatedBy: currentUser?.username || "unknown" });
     resetRegistrationForm();
   });
 
@@ -473,7 +724,7 @@ function bindForms() {
     const amount = currentEntryType === "load" ? jars * rate : Number($("txAmount").value);
     if (currentEntryType === "load" && jars <= 0) return showToast("Enter jar quantity", "error");
     if (currentEntryType === "payment" && amount <= 0) return showToast("Enter payment amount", "error");
-    const tx = { id: $("txForm").dataset.editId ? Number($("txForm").dataset.editId) : Date.now(), timestamp, datetimeStr: cleanFormatDate(timestamp), vehicle, type:currentEntryType, jars, rateApplied: currentEntryType === "load" ? rate : 0, financialValue: amount };
+    const tx = { id: $("txForm").dataset.editId ? Number($("txForm").dataset.editId) : Date.now(), timestamp, datetimeStr: cleanFormatDate(timestamp), vehicle, type:currentEntryType, jars, rateApplied: currentEntryType === "load" ? rate : 0, financialValue: amount, submittedBy: currentUser?.username || "unknown" };
     postToCloud({ action:"addTx", tx });
     $("txForm").reset();
     delete $("txForm").dataset.editId;
@@ -488,6 +739,10 @@ window.addEventListener("load", () => {
   if (localStorage.getItem("kcb_dark") === "true") document.body.classList.add("dark");
   bindForms();
   setEntryType("load");
-  fetchCloudData();
-  setInterval(() => { if (document.visibilityState === "visible") fetchCloudData(); }, 60000);
+  const loggedIn = restoreLogin();
+  if (loggedIn) {
+    switchTab(isAdmin() ? "dashboard" : "logentry");
+    fetchCloudData(false);
+  }
+  setInterval(() => { if (document.visibilityState === "visible" && currentUser) fetchCloudData(false); }, 120000);
 });

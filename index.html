@@ -12,7 +12,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <link rel="stylesheet" href="style.css" />
 </head>
-<body>
+<body class="auth-locked">
   <div id="toast" class="toast hidden"></div>
   <div id="loadingOverlay" class="loading-overlay hidden">
     <div class="loader-card">
@@ -20,6 +20,24 @@
       <p id="loadingText">Loading...</p>
     </div>
   </div>
+
+  <section id="loginScreen" class="auth-screen no-print">
+    <div class="auth-card">
+      <div class="auth-logo">K</div>
+      <h1>KCB Minerals Ledger</h1>
+      <p class="auth-subtitle">Login as Admin or User</p>
+      <form id="loginForm" class="form-stack">
+        <label>Username<input id="loginUsername" class="input" autocomplete="username" required placeholder="admin or user" /></label>
+        <label>Password<input id="loginPassword" class="input" type="password" autocomplete="current-password" required placeholder="Password" /></label>
+        <button class="btn btn-primary w-full" type="submit">🔐 Login</button>
+      </form>
+      <div class="auth-help">
+        <b>Default accounts:</b><br />
+        Admin: <code>admin</code> / <code>admin123</code><br />
+        User: <code>user</code> / <code>user123</code>
+      </div>
+    </div>
+  </section>
 
   <aside class="sidebar no-print">
     <div class="brand">
@@ -40,11 +58,17 @@
       <button id="nav-logentry" class="nav-btn" onclick="switchTab('logentry')">📝 Log Entry</button>
       <button id="nav-statement" class="nav-btn" onclick="switchTab('statement')">📑 Statement</button>
       <button id="nav-register" class="nav-btn" onclick="switchTab('register')">🚛 Registration</button>
+      <button id="nav-users" class="nav-btn admin-only" onclick="switchTab('users')">👥 Admin Users</button>
     </nav>
 
     <div class="sidebar-footer">
+      <div class="user-card mb-3">
+        <span id="sidebarUserName">Not logged in</span>
+        <small id="sidebarUserRole">-</small>
+      </div>
       <button class="btn btn-primary w-full" onclick="fetchCloudData()">🔄 Sync Drive</button>
       <button class="btn btn-secondary w-full mt-2" onclick="toggleDarkMode()">🌙 Dark Mode</button>
+      <button class="btn btn-secondary w-full mt-2" onclick="logoutUser()">🚪 Logout</button>
     </div>
   </aside>
 
@@ -55,9 +79,11 @@
         <p>India Edition • Google Drive Cloud Sync</p>
       </div>
       <div class="top-actions">
-        <button class="btn btn-secondary" onclick="exportExcel()">📊 Excel</button>
-        <button class="btn btn-secondary" onclick="exportPDF()">📄 PDF</button>
+        <span class="top-user-pill"><b id="topUserName">Guest</b><small id="topUserRole">-</small></span>
+        <button id="topExportExcel" class="btn btn-secondary admin-only" onclick="exportExcel()">📊 Excel</button>
+        <button id="topExportPDF" class="btn btn-secondary admin-only" onclick="exportPDF()">📄 PDF</button>
         <button class="btn btn-primary" onclick="fetchCloudData()">🔄 Sync</button>
+        <button class="btn btn-secondary" onclick="logoutUser()">Logout</button>
       </div>
     </header>
 
@@ -137,7 +163,14 @@
     <section id="page-statement" class="tab-page page-space hidden">
       <div class="hero-card">
         <div><h1>📑 Customer Statement</h1><p>Complete vehicle and distributor ledger.</p></div>
-        <div class="hero-actions"><select id="statementDistributor" class="input" onchange="changeStatementDistributor()"><option value="all">All Distributors</option></select><button class="btn btn-secondary" onclick="window.print()">🖨 Print</button></div>
+        <div class="hero-actions statement-filters">
+          <select id="statementDistributor" class="input" onchange="changeStatementDistributor()"><option value="all">All Distributors</option></select>
+          <label class="date-filter-label">From<input id="statementFromDate" class="input" type="date" /></label>
+          <label class="date-filter-label">To<input id="statementToDate" class="input" type="date" /></label>
+          <button class="btn btn-secondary" onclick="renderDetailedDistributorReport()">🔍 Search</button>
+          <button class="btn btn-secondary" onclick="clearStatementPeriod()">Clear</button>
+          <button class="btn btn-secondary" onclick="window.print()">🖨 Print</button>
+        </div>
       </div>
       <div class="stats-grid">
         <div class="stat-card blue"><span>Total Jars</span><strong id="stTotalJars">0</strong></div>
@@ -174,6 +207,26 @@
         <div class="stat-card green"><span>Distributors</span><strong id="distributorCount">0</strong></div>
         <div class="stat-card amber"><span>Average Rate</span><strong id="avgRate">₹0.00</strong></div>
         <div class="stat-card green"><span>Cloud Status</span><strong>Online</strong></div>
+      </div>
+    </section>
+
+    <section id="page-users" class="tab-page page-space hidden admin-only-section">
+      <div class="hero-card"><div><h1>👥 Admin & Users</h1><p>Create local app users and choose their access level.</p></div></div>
+      <div class="grid lg:grid-cols-3 gap-6">
+        <div class="card">
+          <h3>Create / Update User</h3>
+          <form id="userForm" class="form-stack">
+            <label>Username<input id="userUsername" class="input" required placeholder="e.g. driver1" /></label>
+            <label>Password<input id="userPassword" class="input" type="password" required placeholder="Password" /></label>
+            <label>Role<select id="userRole" class="input"><option value="user">User</option><option value="admin">Admin</option></select></label>
+            <button class="btn btn-primary w-full" type="submit">💾 Save User</button>
+          </form>
+          <p class="small-note">Note: This is client-side role control for GitHub Pages. For real security, authentication must be checked in Google Apps Script/backend.</p>
+        </div>
+        <div class="card lg:col-span-2">
+          <div class="section-title"><h3>User Accounts</h3><button class="btn btn-secondary" onclick="resetDefaultUsers()">Reset Defaults</button></div>
+          <div class="table-wrap"><table><thead><tr><th>Username</th><th>Role</th><th class="center">Action</th></tr></thead><tbody id="usersRows"></tbody></table></div>
+        </div>
       </div>
     </section>
   </main>
