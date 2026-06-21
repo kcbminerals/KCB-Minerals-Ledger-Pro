@@ -1,37 +1,77 @@
 # KCB Minerals Ledger Pro
 
-This package contains a cleaned and enhanced version of the KCB Minerals Ledger.
+This package contains the enhanced KCB Minerals Ledger with backend-secured Admin/User login.
 
 ## Files
 
-- `index.html` - Main page
+- `index.html` - Main GitHub Pages app
 - `style.css` - Styling and responsive layout
-- `app.js` - Application logic, Google Apps Script sync, reports, charts, exports
+- `app.js` - Frontend logic, reports, charts, exports, sync
+- `Code.gs` - Google Apps Script backend with secure login and role permissions
 
-## How to use on GitHub Pages
+## GitHub Pages setup
 
-1. Upload all files to your repository root.
-2. Make sure the filenames stay exactly:
-   - index.html
-   - style.css
-   - app.js
-3. Commit changes.
-4. Open your GitHub Pages link.
+Upload these files to your GitHub repository root:
 
-Your existing Google Apps Script URL has been preserved inside `app.js`.
+- `index.html`
+- `style.css`
+- `app.js`
+- `README.md`
 
+Then enable GitHub Pages from repository Settings → Pages.
 
-## Admin and User Login
+## Google Apps Script setup - required
 
-Default accounts:
+1. Open your existing Google Apps Script project.
+2. Replace your current script code with the contents of `Code.gs`.
+3. Click Save.
+4. Click Deploy → Manage deployments.
+5. Edit your Web App deployment or create a new one.
+6. Use these settings:
+   - Execute as: Me
+   - Who has access: Anyone
+7. Deploy.
+8. If Google gives you a new Web App URL, paste that URL into the first line of `app.js`:
+
+```js
+const CLOUD_API_URL = "YOUR_NEW_WEB_APP_URL_HERE";
+```
+
+## Default backend accounts
+
 - Admin: `admin` / `admin123`
 - User: `user` / `user123`
 
-Admin can access Dashboard, Statement, Registration, Log Entry, Exports, and User Management.
-User can access only Log Entry and Registration. Dashboard, Customer Statement, exports, transaction edit/delete, and user management are hidden.
+Change these after first login from Admin Users.
 
-Important: Because GitHub Pages is static hosting, this role system is client-side access control. For real secure authentication, implement login validation in Google Apps Script/backend.
+## Access control
 
-## Sync Fix
+Admin can access:
 
-Background Drive sync no longer opens the full white loading overlay. The overlay is now only used while saving records; automatic sync updates the sidebar status silently.
+- Dashboard
+- Customer Statement
+- Registration
+- Log Entry and Payment Entry
+- Exports
+- User Management
+- Edit/Delete transactions
+
+User can access only:
+
+- Log Entry
+- Payment Entry
+- Registration
+
+The backend also checks permissions before saving data. Users cannot delete transactions or manage users from direct API calls.
+
+## Sync fix
+
+Background Drive sync no longer opens the full white loading overlay. The overlay is used only while saving records; automatic sync updates the sidebar status silently.
+
+## Data storage
+
+The backend stores ledger data in a Google Drive JSON file named:
+
+`KCB_Minerals_Ledger_DB.json`
+
+User accounts are stored in Apps Script Properties with hashed passwords.

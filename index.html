@@ -25,16 +25,17 @@
     <div class="auth-card">
       <div class="auth-logo">K</div>
       <h1>KCB Minerals Ledger</h1>
-      <p class="auth-subtitle">Login as Admin or User</p>
+      <p class="auth-subtitle">Backend-secured login via Google Apps Script</p>
       <form id="loginForm" class="form-stack">
         <label>Username<input id="loginUsername" class="input" autocomplete="username" required placeholder="admin or user" /></label>
         <label>Password<input id="loginPassword" class="input" type="password" autocomplete="current-password" required placeholder="Password" /></label>
         <button class="btn btn-primary w-full" type="submit">🔐 Login</button>
       </form>
       <div class="auth-help">
-        <b>Default accounts:</b><br />
+        <b>Default backend accounts:</b><br />
         Admin: <code>admin</code> / <code>admin123</code><br />
-        User: <code>user</code> / <code>user123</code>
+        User: <code>user</code> / <code>user123</code><br />
+        <small>Change these from the Admin Users page after first login.</small>
       </div>
     </div>
   </section>
@@ -211,7 +212,7 @@
     </section>
 
     <section id="page-users" class="tab-page page-space hidden admin-only-section">
-      <div class="hero-card"><div><h1>👥 Admin & Users</h1><p>Create local app users and choose their access level.</p></div></div>
+      <div class="hero-card"><div><h1>👥 Admin & Users</h1><p>Create backend users and choose their access level.</p></div></div>
       <div class="grid lg:grid-cols-3 gap-6">
         <div class="card">
           <h3>Create / Update User</h3>
@@ -221,7 +222,7 @@
             <label>Role<select id="userRole" class="input"><option value="user">User</option><option value="admin">Admin</option></select></label>
             <button class="btn btn-primary w-full" type="submit">💾 Save User</button>
           </form>
-          <p class="small-note">Note: This is client-side role control for GitHub Pages. For real security, authentication must be checked in Google Apps Script/backend.</p>
+          <p class="small-note">Users are saved in Google Apps Script backend. Frontend passwords are no longer stored in browser code.</p>
         </div>
         <div class="card lg:col-span-2">
           <div class="section-title"><h3>User Accounts</h3><button class="btn btn-secondary" onclick="resetDefaultUsers()">Reset Defaults</button></div>

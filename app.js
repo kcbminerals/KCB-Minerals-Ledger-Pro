@@ -9,85 +9,41 @@ let revenueChart = null;
 let paymentChart = null;
 let currentUser = null;
 
-const DEFAULT_USERS = [
-  { username: "admin", password: "admin123", role: "admin" },
-  { username: "user", password: "user123", role: "user" }
-];
+const SESSION_KEY = "kcb_current_user";
 
-const $ = id => document.getElementById(id);
+function apiGet(action, params = {}) {
+  return new Promise((resolve, reject) => {
+    const cb = "kcb_api_" + Date.now() + "_" + Math.floor(Math.random() * 100000);
+    const script = document.createElement("script");
+    const query = new URLSearchParams({ action, callback: cb, ...params });
 
-function showToast(message, type = "success") {
-  const toast = $("toast");
-  toast.textContent = message;
-  toast.style.background = type === "error" ? "#dc2626" : type === "warn" ? "#d97706" : "#0f172a";
-  toast.classList.remove("hidden");
-  clearTimeout(window.__toastTimer);
-  window.__toastTimer = setTimeout(() => toast.classList.add("hidden"), 2800);
+    window[cb] = data => {
+      cleanup();
+      resolve(data || {});
+    };
+
+    script.onerror = () => {
+      cleanup();
+      reject(new Error("Unable to connect to Apps Script backend"));
+    };
+
+    function cleanup() {
+      try { delete window[cb]; } catch {}
+      script.remove();
+    }
+
+    script.src = CLOUD_API_URL + (CLOUD_API_URL.includes("?") ? "&" : "?") + query.toString();
+    document.body.appendChild(script);
+  });
 }
 
-function showLoading(text = "Loading...") {
-  const overlay = $("loadingOverlay");
-  if ($("loadingText")) $("loadingText").textContent = text;
-  if (overlay) overlay.classList.remove("hidden");
-  setSync("⌛ " + text);
-}
-
-function hideLoading(text = "Ready") {
-  const overlay = $("loadingOverlay");
-  if (overlay) overlay.classList.add("hidden");
-  setSync("🟢 " + text);
-}
-
-function setSync(text) {
-  const el = $("syncIndicator");
-  if (el) el.textContent = text;
-}
-
-function startQuietSync(text = "Syncing with Drive...") {
-  setSync("⌛ " + text);
-}
-
-function finishQuietSync(text = "Connected") {
-  setSync("🟢 " + text);
-}
-
-function formatINR(value) {
-  return "₹" + Number(value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function cleanFormatDate(value) {
-  if (!value) return "-";
-  const d = new Date(value);
-  if (isNaN(d.getTime())) return String(value);
-  return d.toLocaleString("en-IN", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit", hour12:true });
-}
-
-function escapeHTML(str) {
-  return String(str ?? "").replace(/[&<>'"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[ch]));
-}
-
-function toggleDarkMode() {
-  document.body.classList.toggle("dark");
-  localStorage.setItem("kcb_dark", document.body.classList.contains("dark"));
-  updateDashboardCharts();
-}
-
-function getUsers() {
-  const saved = localStorage.getItem("kcb_users");
-  if (!saved) {
-    localStorage.setItem("kcb_users", JSON.stringify(DEFAULT_USERS));
-    return [...DEFAULT_USERS];
+function requireSession() {
+  const token = currentUser?.token;
+  if (!token) {
+    logoutUser(false);
+    throw new Error("Session expired. Please login again.");
   }
-  try {
-    const parsed = JSON.parse(saved);
-    return Array.isArray(parsed) && parsed.length ? parsed : [...DEFAULT_USERS];
-  } catch {
-    return [...DEFAULT_USERS];
-  }
-}
-
-function saveUsers(users) {
-  localStorage.setItem("kcb_users", JSON.stringify(users));
+  return token;
 }
 
 function isAdmin() {
@@ -104,7 +60,7 @@ function canOpenPage(page) {
 
 function applyAccessControl() {
   document.body.classList.toggle("role-admin", isAdmin());
-  document.body.classList.toggle("role-user", !isAdmin());
+  document.body.classList.toggle("role-user", !!currentUser && !isAdmin());
   const allowed = allowedPages();
   ["dashboard", "logentry", "statement", "register", "users"].forEach(page => {
     const btn = $("nav-" + page);
@@ -116,28 +72,47 @@ function applyAccessControl() {
   if ($("topUserRole")) $("topUserRole").textContent = role;
   if ($("sidebarUserName")) $("sidebarUserName").textContent = name;
   if ($("sidebarUserRole")) $("sidebarUserRole").textContent = role;
-  renderUserManager();
+  if (isAdmin()) refreshUserList(false);
 }
 
-function loginUser(username, password) {
-  const user = getUsers().find(u => u.username === username && u.password === password);
-  if (!user) {
-    showToast("Invalid username or password", "error");
+async function loginUser(username, password) {
+  try {
+    showLoading("Checking login...");
+    const data = await apiGet("login", { username, password });
+    hideLoading("Ready");
+
+    if (!data.ok) {
+      showToast(data.error || "Invalid username or password", "error");
+      return false;
+    }
+
+    currentUser = {
+      username: data.user.username,
+      role: data.user.role,
+      token: data.token
+    };
+
+    localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
+    document.body.classList.remove("auth-locked");
+    applyAccessControl();
+    switchTab(isAdmin() ? "dashboard" : "logentry");
+    fetchCloudData(false);
+    showToast(`Welcome ${currentUser.username}`);
+    return true;
+  } catch (err) {
+    hideLoading("Login failed");
+    showToast(err.message || "Login failed", "error");
     return false;
   }
-  currentUser = { username: user.username, role: user.role };
-  localStorage.setItem("kcb_current_user", JSON.stringify(currentUser));
-  document.body.classList.remove("auth-locked");
-  applyAccessControl();
-  switchTab(isAdmin() ? "dashboard" : "logentry");
-  fetchCloudData(false);
-  showToast(`Welcome ${currentUser.username}`);
-  return true;
 }
 
-function logoutUser() {
+async function logoutUser(callBackend = true) {
+  const token = currentUser?.token;
+  if (callBackend && token) {
+    apiGet("logout", { token }).catch(() => {});
+  }
   currentUser = null;
-  localStorage.removeItem("kcb_current_user");
+  localStorage.removeItem(SESSION_KEY);
   document.body.classList.add("auth-locked");
   document.body.classList.remove("role-admin", "role-user");
   if ($("loginPassword")) $("loginPassword").value = "";
@@ -145,10 +120,9 @@ function logoutUser() {
 }
 
 function restoreLogin() {
-  getUsers();
   try {
-    const saved = JSON.parse(localStorage.getItem("kcb_current_user") || "null");
-    if (saved?.username && saved?.role) {
+    const saved = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
+    if (saved?.username && saved?.role && saved?.token) {
       currentUser = saved;
       document.body.classList.remove("auth-locked");
       applyAccessControl();
@@ -159,14 +133,25 @@ function restoreLogin() {
   return false;
 }
 
-function renderUserManager() {
+async function refreshUserList(showDoneToast = false) {
   const rows = $("usersRows");
   if (!rows || !isAdmin()) return;
-  rows.innerHTML = "";
-  getUsers().forEach(u => {
-    const disabled = u.username === currentUser?.username ? "disabled" : "";
-    rows.insertAdjacentHTML("beforeend", `<tr><td><b>${escapeHTML(u.username)}</b></td><td>${escapeHTML(u.role)}</td><td class="center"><button class="btn btn-red" ${disabled} onclick="deleteUserAccount('${escapeHTML(u.username)}')">Delete</button></td></tr>`);
-  });
+  try {
+    const data = await apiGet("listUsers", { token: requireSession() });
+    if (!data.ok) throw new Error(data.error || "Unable to load users");
+    rows.innerHTML = "";
+    (data.users || []).forEach(u => {
+      const disabled = u.username === currentUser?.username ? "disabled" : "";
+      rows.insertAdjacentHTML("beforeend", `<tr><td><b>${escapeHTML(u.username)}</b></td><td>${escapeHTML(u.role)}</td><td class="center"><button class="btn btn-red" ${disabled} onclick="deleteUserAccount('${escapeHTML(u.username)}')">Delete</button></td></tr>`);
+    });
+    if (showDoneToast) showToast("Users refreshed");
+  } catch (err) {
+    rows.innerHTML = `<tr><td colspan="3" class="center">${escapeHTML(err.message || "Unable to load users")}</td></tr>`;
+  }
+}
+
+function renderUserManager() {
+  refreshUserList(false);
 }
 
 function saveUserAccount() {
@@ -175,29 +160,24 @@ function saveUserAccount() {
   const password = $("userPassword").value.trim();
   const role = $("userRole").value;
   if (!username || !password) return showToast("Enter username and password", "error");
-  let users = getUsers().filter(u => u.username !== username);
-  users.push({ username, password, role });
-  saveUsers(users);
+  postToCloud({ action: "saveUser", username, password, role }, { refreshData: false, successMessage: "User saved" });
   $("userForm").reset();
-  renderUserManager();
-  showToast("User saved");
+  setTimeout(() => refreshUserList(true), 1200);
 }
 
 function deleteUserAccount(username) {
   if (!isAdmin()) return showToast("Only admin can delete users", "error");
   if (username === currentUser?.username) return showToast("You cannot delete the logged-in user", "error");
   if (!confirm(`Delete user ${username}?`)) return;
-  saveUsers(getUsers().filter(u => u.username !== username));
-  renderUserManager();
-  showToast("User deleted");
+  postToCloud({ action: "deleteUser", username }, { refreshData: false, successMessage: "User deleted" });
+  setTimeout(() => refreshUserList(true), 1200);
 }
 
 function resetDefaultUsers() {
   if (!isAdmin()) return;
-  if (!confirm("Reset users to default admin/user accounts?")) return;
-  saveUsers([...DEFAULT_USERS]);
-  renderUserManager();
-  showToast("Default users restored");
+  if (!confirm("Reset backend users to default admin/user accounts?")) return;
+  postToCloud({ action: "resetUsers" }, { refreshData: false, successMessage: "Default users restored" });
+  setTimeout(() => refreshUserList(true), 1200);
 }
 
 function switchTab(tabName) {
@@ -221,35 +201,22 @@ async function fetchCloudData(showToastOnDone = true) {
   if (!currentUser) return;
   startQuietSync("Syncing with Drive...");
   try {
-    const res = await fetch(CLOUD_API_URL, { method: "GET", mode: "cors" });
-    if (!res.ok) throw new Error("Network error");
-    const data = await res.json();
+    const data = await apiGet("getData", { token: requireSession() });
+    if (!data.ok && data.error) throw new Error(data.error);
     applyCloudData(data);
     finishQuietSync("Connected");
     if (showToastOnDone) showToast("Cloud sync completed");
   } catch (err) {
     console.warn(err);
-    fetchCloudDataFallback(showToastOnDone);
-  }
-}
-
-function fetchCloudDataFallback(showToastOnDone = true) {
-  const cb = "kcb_jsonp_" + Date.now();
-  const script = document.createElement("script");
-  window[cb] = data => {
-    applyCloudData(data);
-    finishQuietSync("Connected via fallback");
-    if (showToastOnDone) showToast("Cloud sync completed");
-    delete window[cb];
-    script.remove();
-  };
-  script.onerror = () => {
-    finishQuietSync("Offline");
+    finishQuietSync("Sync failed");
+    if (String(err.message || "").toLowerCase().includes("session") || String(err.message || "").toLowerCase().includes("unauthorized")) {
+      logoutUser(false);
+      showToast("Session expired. Please login again.", "error");
+      return;
+    }
     if (showToastOnDone) showToast("Cloud sync failed. Check Apps Script deployment.", "error");
     loadLocalBackup();
-  };
-  script.src = CLOUD_API_URL + (CLOUD_API_URL.includes("?") ? "&" : "?") + "callback=" + cb;
-  document.body.appendChild(script);
+  }
 }
 
 function applyCloudData(data) {
@@ -283,21 +250,23 @@ function normalizeTx(tx) {
   };
 }
 
-async function postToCloud(payload) {
+async function postToCloud(payload, options = {}) {
+  const { refreshData = true, successMessage = "Saved successfully" } = options;
+  const securedPayload = { ...payload, sessionToken: requireSession() };
   showLoading("Saving to Google Drive...");
   try {
-    if (window.location.protocol === "file:") return postToCloudFallback(payload);
-    await fetch(CLOUD_API_URL, { method:"POST", mode:"no-cors", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload) });
+    if (window.location.protocol === "file:") return postToCloudFallback(securedPayload, options);
+    await fetch(CLOUD_API_URL, { method:"POST", mode:"no-cors", headers:{"Content-Type":"application/json"}, body:JSON.stringify(securedPayload) });
     hideLoading("Saved");
-    showToast("Saved successfully");
-    setTimeout(() => fetchCloudData(false), 1200);
+    showToast(successMessage);
+    if (refreshData) setTimeout(() => fetchCloudData(false), 1200);
   } catch (err) {
     console.warn(err);
-    postToCloudFallback(payload);
+    postToCloudFallback(securedPayload, options);
   }
 }
 
-function postToCloudFallback(payload) {
+function postToCloudFallback(payload, options = {}) {
   const iframe = document.createElement("iframe");
   iframe.name = "kcb_post_" + Date.now();
   iframe.style.display = "none";
@@ -313,8 +282,8 @@ function postToCloudFallback(payload) {
   document.body.append(iframe, form);
   form.submit();
   hideLoading("Saved");
-  showToast("Data sent to cloud");
-  setTimeout(() => { form.remove(); iframe.remove(); fetchCloudData(false); }, 1500);
+  showToast(options.successMessage || "Data sent to cloud");
+  setTimeout(() => { form.remove(); iframe.remove(); if (options.refreshData !== false) fetchCloudData(false); }, 1500);
 }
 
 function renderAll() {
