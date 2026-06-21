@@ -16,18 +16,28 @@ function apiGet(action, params = {}) {
     const cb = "kcb_api_" + Date.now() + "_" + Math.floor(Math.random() * 100000);
     const script = document.createElement("script");
     const query = new URLSearchParams({ action, callback: cb, ...params });
+    let done = false;
+
+    const timer = setTimeout(() => {
+      if (done) return;
+      cleanup();
+      reject(new Error("Backend did not respond. Re-deploy Apps Script and confirm app.js has the correct /exec URL."));
+    }, 15000);
 
     window[cb] = data => {
+      done = true;
       cleanup();
       resolve(data || {});
     };
 
     script.onerror = () => {
+      if (done) return;
       cleanup();
-      reject(new Error("Unable to connect to Apps Script backend"));
+      reject(new Error("Unable to connect to Apps Script backend. Check Web App access is set to Anyone."));
     };
 
     function cleanup() {
+      clearTimeout(timer);
       try { delete window[cb]; } catch {}
       script.remove();
     }
@@ -35,6 +45,22 @@ function apiGet(action, params = {}) {
     script.src = CLOUD_API_URL + (CLOUD_API_URL.includes("?") ? "&" : "?") + query.toString();
     document.body.appendChild(script);
   });
+}
+
+function showLoginHelp(message) {
+  let box = document.getElementById("loginErrorBox");
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "loginErrorBox";
+    box.className = "auth-error";
+    document.querySelector(".auth-card")?.appendChild(box);
+  }
+  box.innerHTML = message;
+}
+
+async function checkBackendHealth() {
+  const data = await apiGet("health", { t: Date.now() });
+  return data;
 }
 
 function requireSession() {
@@ -77,11 +103,34 @@ function applyAccessControl() {
 
 async function loginUser(username, password) {
   try {
+    showLoginHelp("");
+    showLoading("Checking backend...");
+
+    let health;
+    try {
+      health = await checkBackendHealth();
+    } catch (healthErr) {
+      hideLoading("Login failed");
+      const msg = escapeHTML(healthErr.message || "Backend not reachable");
+      showLoginHelp(`<b>Backend connection failed.</b><br>${msg}<br><br>Fix: paste the latest <code>Code.gs</code>, save, then Deploy → Manage deployments → Edit → New version → Deploy. Also confirm the first line of <code>app.js</code> has your latest <code>/exec</code> URL.`);
+      showToast("Backend not connected", "error");
+      return false;
+    }
+
+    if (!health.ok || !String(health.authVersion || "").includes("fixed-login")) {
+      hideLoading("Login failed");
+      showLoginHelp(`<b>Apps Script is still using old code.</b><br>Please replace <code>Code.gs</code> with the latest file, save it, and redeploy as a new version.`);
+      showToast("Apps Script code is outdated", "error");
+      return false;
+    }
+
     showLoading("Checking login...");
-    const data = await apiGet("login", { username, password });
+    const data = await apiGet("login", { username: String(username || "").trim().toLowerCase(), password });
     hideLoading("Ready");
 
     if (!data.ok) {
+      const err = escapeHTML(data.error || "Invalid username or password");
+      showLoginHelp(`<b>${err}</b><br><br>If default login fails, open Apps Script, select <code>resetUsersToDefaultManual</code>, click <b>Run</b>, then redeploy and try:<br>Admin: <code>admin</code> / <code>admin123</code>`);
       showToast(data.error || "Invalid username or password", "error");
       return false;
     }
@@ -94,6 +143,8 @@ async function loginUser(username, password) {
 
     localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
     document.body.classList.remove("auth-locked");
+    const box = document.getElementById("loginErrorBox");
+    if (box) box.innerHTML = "";
     applyAccessControl();
     switchTab(isAdmin() ? "dashboard" : "logentry");
     fetchCloudData(false);
@@ -101,6 +152,8 @@ async function loginUser(username, password) {
     return true;
   } catch (err) {
     hideLoading("Login failed");
+    const msg = escapeHTML(err.message || "Login failed");
+    showLoginHelp(`<b>Login failed.</b><br>${msg}`);
     showToast(err.message || "Login failed", "error");
     return false;
   }

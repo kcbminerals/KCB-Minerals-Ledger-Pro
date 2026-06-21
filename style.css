@@ -11,3 +11,6 @@ body.dark .date-filter-label .input{color:#e2e8f0}
 
 /* Non-blocking sync: overlay is used for save operations only */
 .loading-overlay.light-sync{display:none!important}
+
+.auth-error{margin-top:14px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;border-radius:14px;padding:12px;font-size:12px;line-height:1.45;text-align:left}.auth-error:empty{display:none}.auth-error code{background:#fee2e2;border-radius:6px;padding:2px 5px}
+body.dark .auth-error{background:#450a0a;border-color:#7f1d1d;color:#fecaca}body.dark .auth-error code{background:#7f1d1d;color:#fff}

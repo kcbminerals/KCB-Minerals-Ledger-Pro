@@ -75,3 +75,23 @@ The backend stores ledger data in a Google Drive JSON file named:
 `KCB_Minerals_Ledger_DB.json`
 
 User accounts are stored in Apps Script Properties with hashed passwords.
+
+
+## If login fails
+
+1. Open Apps Script and confirm the latest `Code.gs` from this ZIP is pasted and saved.
+2. Click **Deploy → Manage deployments → Edit**.
+3. Choose **Version: New version** and click **Deploy**. Saving code alone is not enough.
+4. Confirm `app.js` line 1 uses the same Web App URL ending in `/exec`.
+5. If `admin / admin123` still fails, reset the backend users:
+   - In Apps Script, open the function dropdown near the Run button.
+   - Select `resetUsersToDefaultManual`.
+   - Click **Run** and approve permissions if asked.
+   - Deploy a new version again.
+   - Try login again with `admin / admin123`.
+
+You can also test the backend by opening your Web App URL with:
+
+`?action=health`
+
+It should return JSON/JSONP containing `authVersion: 3.2-fixed-login`.
