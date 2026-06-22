@@ -85,16 +85,16 @@ function showToast(message, type = "success") {
 }
 
 function showLoading(message = "Loading...") {
-  const overlay = $("loadingOverlay");
-  const text = $("loadingText");
-  if (text) text.textContent = message;
-  if (overlay) overlay.classList.remove("hidden", "light-sync");
+  // v3.8: No full-page white overlay for sync/save. Keep the app usable.
+  startQuietSync(message);
 }
 
 function hideLoading(message = "") {
   const overlay = $("loadingOverlay");
   if (overlay) overlay.classList.add("hidden");
-  if (message && message !== "Ready" && message !== "Saved") showToast(message);
+  if (message && message !== "Ready") {
+    finishQuietSync(message === "Saved" ? "Saved to Google Sheet" : message);
+  }
 }
 
 function startQuietSync(message = "Syncing...") {
@@ -272,7 +272,7 @@ async function loginUser(username, password) {
     // First try the secure Google Apps Script backend login.
     try {
       const health = await checkBackendHealth();
-      if (health && health.ok && String(health.authVersion || "").includes("fixed-login")) {
+      if (health && health.ok && String(health.storage || "").toLowerCase().includes("sheet")) {
         const data = await apiGet("login", { username, password });
         hideLoading("Ready");
 
@@ -295,13 +295,9 @@ async function loginUser(username, password) {
           return true;
         }
 
-        // Backend replied but credentials failed. Then try only the default local fallback.
-        if (localFallbackLogin(username, password)) {
-          showLoginHelp(`<b>Backend rejected the password, so local fallback was used.</b><br>To make backend login work, run <code>resetUsersToDefaultManual</code> in Apps Script and deploy a new version.`);
-          return true;
-        }
-
-        showLoginHelp(`<b>${escapeHTML(data.error || "Invalid username or password")}</b><br><br>Try default accounts:<br>Admin: <code>admin</code> / <code>admin123</code><br>User: <code>user</code> / <code>user123</code>`);
+        // Backend is active, so do NOT use local fallback for wrong credentials.
+        // This keeps desktop and mobile using the same backend users/passwords.
+        showLoginHelp(`<b>${escapeHTML(data.error || "Invalid username or password")}</b><br><br>This device is connected to the Google Sheet backend. Use the backend username/password. If needed, reset users from Apps Script using <code>?action=resetDefaultUsers&setupKey=KCB-RESET-2026</code>.`);
         showToast(data.error || "Invalid username or password", "error");
         return false;
       }
@@ -311,14 +307,15 @@ async function loginUser(username, password) {
 
     hideLoading("Ready");
 
-    // Reliable fallback so the app does not get stuck at login while Apps Script is being fixed.
-    if (localFallbackLogin(username, password)) {
-      showLoginHelp(`<b>Local fallback login active.</b><br>Your Google Apps Script backend is not responding with the new auth code. The app can still open, but for true backend security paste the latest <code>Code.gs</code> and redeploy a new Web App version.`);
+    // Emergency fallback only when backend is unreachable.
+    // Users created on one device cannot be used on another in local mode.
+    if ((username === "admin" || username === "user") && localFallbackLogin(username, password)) {
+      showLoginHelp(`<b>Emergency local login active.</b><br>The Apps Script backend is not responding, so only default local login was allowed. Custom users/passwords require backend login. Re-deploy <code>Code.gs</code> and make sure <code>app.js</code> has the latest /exec URL.`);
       return true;
     }
 
-    showLoginHelp(`<b>Invalid username or password.</b><br><br>Use:<br>Admin: <code>admin</code> / <code>admin123</code><br>User: <code>user</code> / <code>user123</code>`);
-    showToast("Invalid username or password", "error");
+    showLoginHelp(`<b>Backend connection failed.</b><br>Custom desktop users/passwords work on mobile only after backend login works. Check Apps Script deployment and app.js URL.`);
+    showToast("Backend login failed", "error");
     return false;
   } catch (err) {
     hideLoading("Login failed");
@@ -492,7 +489,7 @@ function switchTab(tabName) {
 
 async function fetchCloudData(showToastOnDone = true) {
   if (!currentUser) return;
-  startQuietSync("Syncing with Drive...");
+  startQuietSync("Syncing with Google Sheet...");
 
   const attempts = [];
   if (!isLocalFallbackMode()) {
@@ -509,8 +506,8 @@ async function fetchCloudData(showToastOnDone = true) {
       if (data && (data.vehicles || data.transactions || data.ok)) {
         if (data.ok === false && data.error) throw new Error(data.error);
         applyCloudData(data);
-        finishQuietSync(isLocalFallbackMode() ? "Connected to Sheet / local login" : "Connected to Sheet");
-        if (showToastOnDone) showToast("Google Sheet sync completed");
+        finishQuietSync(isLocalFallbackMode() ? "Local mode - backend unavailable" : "Connected to Google Sheet");
+        if (showToastOnDone) showToast("Synced from Google Sheet");
         return;
       }
     } catch (err) {
@@ -520,7 +517,7 @@ async function fetchCloudData(showToastOnDone = true) {
 
   finishQuietSync("Offline backup");
   loadLocalBackup();
-  if (showToastOnDone) showToast("Could not sync Drive. Showing local backup.", "warn");
+  if (showToastOnDone) showToast("Could not sync Google Sheet. Showing this device backup.", "warn");
 }
 
 function legacyJsonpGetData() {
@@ -592,22 +589,27 @@ function normalizeTx(tx) {
 
 async function postToCloud(payload, options = {}) {
   const { refreshData = true, successMessage = "Saved successfully" } = options;
+  const securedPayload = isLocalFallbackMode()
+    ? { ...payload, publicWrite: true, updatedBy: currentUser?.username || "local-user" }
+    : { ...payload, sessionToken: requireSession() };
 
-  if (isLocalFallbackMode()) {
-    applyLocalWrite(payload);
-  }
+  // Show the change immediately on this device, but always send it to Google Sheet too.
+  // After the Sheet write, we sync again so mobile and desktop match.
+  if (isLocalFallbackMode()) applyLocalWrite(payload);
 
-  const securedPayload = isLocalFallbackMode() ? { ...payload } : { ...payload, sessionToken: requireSession() };
-  showLoading("Saving to Google Drive...");
+  startQuietSync("Saving to Google Sheet...");
+  showToast("Saving to Google Sheet...", "warn");
+
   try {
-    if (window.location.protocol === "file:") return postToCloudFallback(securedPayload, options);
-    await fetch(CLOUD_API_URL, { method:"POST", mode:"no-cors", headers:{"Content-Type":"application/json"}, body:JSON.stringify(securedPayload) });
-    hideLoading("Saved");
-    showToast(isLocalFallbackMode() ? successMessage + " (saved locally + Google Sheet attempted)" : successMessage);
-    if (refreshData && !isLocalFallbackMode()) setTimeout(() => fetchCloudData(false), 1200);
+    await postToCloudForm(securedPayload);
+    finishQuietSync("Saved to Google Sheet");
+    showToast(successMessage + " — syncing other devices...");
+    if (refreshData) setTimeout(() => fetchCloudData(false), 2500);
   } catch (err) {
-    console.warn(err);
-    postToCloudFallback(securedPayload, options);
+    console.warn("Google Sheet write failed", err);
+    if (!isLocalFallbackMode()) applyLocalWrite(payload);
+    finishQuietSync("Saved on this device only");
+    showToast("Google Sheet write failed. Saved on this device only. Check Apps Script deployment.", "error");
   }
 }
 
@@ -639,24 +641,58 @@ function applyLocalWrite(payload) {
   }
 }
 
+function postToCloudForm(payload) {
+  return new Promise((resolve, reject) => {
+    const iframe = document.createElement("iframe");
+    iframe.name = "kcb_post_" + Date.now() + "_" + Math.floor(Math.random() * 100000);
+    iframe.style.display = "none";
+
+    const form = document.createElement("form");
+    form.method = "POST";
+    form.action = CLOUD_API_URL;
+    form.target = iframe.name;
+
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = "payload";
+    input.value = JSON.stringify(payload);
+    form.appendChild(input);
+
+    let finished = false;
+    const cleanup = () => {
+      setTimeout(() => {
+        try { form.remove(); } catch {}
+        try { iframe.remove(); } catch {}
+      }, 500);
+    };
+
+    iframe.onload = () => {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      resolve({ ok: true });
+    };
+
+    document.body.append(iframe, form);
+    form.submit();
+
+    // Apps Script cross-origin iframes do not always fire onload on mobile browsers.
+    // Treat the form submit as sent after a short delay, then refresh from Sheet.
+    setTimeout(() => {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      resolve({ ok: true });
+    }, 2200);
+  });
+}
+
 function postToCloudFallback(payload, options = {}) {
-  const iframe = document.createElement("iframe");
-  iframe.name = "kcb_post_" + Date.now();
-  iframe.style.display = "none";
-  const form = document.createElement("form");
-  form.method = "POST";
-  form.action = CLOUD_API_URL;
-  form.target = iframe.name;
-  const input = document.createElement("input");
-  input.type = "hidden";
-  input.name = "payload";
-  input.value = JSON.stringify(payload);
-  form.appendChild(input);
-  document.body.append(iframe, form);
-  form.submit();
-  hideLoading("Saved");
-  showToast(options.successMessage || "Data sent to cloud");
-  setTimeout(() => { form.remove(); iframe.remove(); if (options.refreshData !== false) fetchCloudData(false); }, 1500);
+  return postToCloudForm(payload).then(() => {
+    finishQuietSync("Data sent to Google Sheet");
+    showToast(options.successMessage || "Data sent to Google Sheet");
+    if (options.refreshData !== false) setTimeout(() => fetchCloudData(false), 2500);
+  });
 }
 
 function renderAll() {

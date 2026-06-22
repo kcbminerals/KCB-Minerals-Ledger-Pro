@@ -1,46 +1,56 @@
-# KCB Minerals Ledger Pro v3.7 - Existing Google Sheet Fix
+# KCB Minerals Ledger Pro v3.9 - Mobile/Desktop Shared Sync Fix
 
-This version fixes the issue where Apps Script created a new Google Sheet.
+## Fixes in this version
 
-## Important
+- Desktop and mobile now use the same backend login instead of local-only users.
+- Backend health detection accepts the Google Sheets backend version correctly.
+- Previous Google Sheet data is loaded through `getData/getDataPublic` from the shared Apps Script backend.
+- Log entries and registrations continue to save to the same Google Sheet.
+- Mobile layout is reorganized with horizontal navigation, compact sidebar, better buttons, and cleaner cards.
+- Sync remains quiet: no white full-screen syncing page.
 
-To use your OLD Google Sheet, open `Code.gs` and set:
+## Upload to GitHub
 
-```javascript
-const SPREADSHEET_ID = 'PASTE_YOUR_OLD_SHEET_ID_HERE';
-```
+Upload/replace:
 
-The Sheet ID is the long part in your Google Sheet URL:
+- `index.html`
+- `style.css`
+- `app.js`
+- `README.md`
+- `assets/logo.png`
 
-```text
-https://docs.google.com/spreadsheets/d/SHEET_ID_HERE/edit
-```
+Then open the website and hard refresh:
 
-If your Apps Script is attached directly to the old Google Sheet, this version will also try to use that attached Sheet automatically.
+- Desktop: `Ctrl + Shift + R`
+- Mobile Chrome: open in Incognito once, or clear site data for your GitHub Pages URL.
 
-## Required sheet tabs
+## Upload to Google Apps Script
 
-The backend will create these tabs in your old Sheet if they do not exist:
+Open your OLD Google Sheet → Extensions → Apps Script.
 
-- Vehicles
-- Transactions
+Replace `Code.gs` with the new `Code.gs` from this package.
 
-## Deploy
+Deploy:
 
-After changing Code.gs:
+Deploy → Manage deployments → Edit → Version: New version → Deploy
 
-Deploy -> Manage deployments -> Edit -> Version: New version -> Deploy
+## Verify
 
-Then open:
+Open your Apps Script `/exec` URL with:
 
-```text
-YOUR_APPS_SCRIPT_URL?action=health
-```
+`?action=health`
 
 It should show:
 
-```text
-authVersion: 3.7-use-existing-sheet
-```
+`authVersion: 3.9-mobile-desktop-sync`
 
-and the `spreadsheetUrl` should be your OLD Google Sheet URL.
+Then open:
+
+`?action=getDataPublic`
+
+The data shown there is what both mobile and desktop will load.
+
+## Important about users
+
+Users created while the app showed `LOCAL` were saved only on that device.
+This v3.9 version uses backend login when Apps Script is deployed correctly, so users created by admin will work on both desktop and mobile.

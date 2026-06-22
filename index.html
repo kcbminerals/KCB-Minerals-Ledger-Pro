@@ -25,7 +25,7 @@
     <div class="auth-card">
       <img src="assets/logo.png" alt="KCB Minerals Logo" class="auth-logo-img" />
       <h1>KCB Minerals Ledger</h1>
-      <p class="auth-subtitle">Secure login with reliable fallback mode</p>
+      <p class="auth-subtitle">Secure login with shared Google Sheet backend</p>
       <form id="loginForm" class="form-stack">
         <label>Username<input id="loginUsername" class="input" autocomplete="username" required placeholder="admin or user" /></label>
         <label>Password<input id="loginPassword" class="input" type="password" autocomplete="current-password" required placeholder="Password" /></label>
@@ -67,7 +67,7 @@
         <span id="sidebarUserName">Not logged in</span>
         <small id="sidebarUserRole">-</small>
       </div>
-      <button class="btn btn-primary w-full" onclick="fetchCloudData()">🔄 Sync Drive</button>
+      <button class="btn btn-primary w-full" onclick="fetchCloudData()">🔄 Sync Sheet</button>
       <button class="btn btn-secondary w-full mt-2" onclick="toggleDarkMode()">🌙 Dark Mode</button>
       <button class="btn btn-secondary w-full mt-2" onclick="logoutUser()">🚪 Logout</button>
     </div>
@@ -77,7 +77,7 @@
     <header class="topbar no-print">
       <div>
         <h2 id="topBarContextTitle">Dashboard</h2>
-        <p>India Edition • Google Drive Cloud Sync</p>
+        <p>India Edition • Google Sheet Cloud Sync</p>
       </div>
       <div class="top-actions">
         <span class="top-user-pill"><b id="topUserName">Guest</b><small id="topUserRole">-</small></span>
