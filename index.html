@@ -69,6 +69,7 @@
       </div>
       <button class="btn btn-primary w-full" onclick="fetchCloudData()">🔄 Sync Drive</button>
       <button class="btn btn-secondary w-full mt-2" onclick="toggleDarkMode()">🌙 Dark Mode</button>
+      <button class="btn btn-secondary w-full mt-2" onclick="openChangePassword()">🔑 Change Password</button>
       <button class="btn btn-secondary w-full mt-2" onclick="logoutUser()">🚪 Logout</button>
     </div>
   </aside>
@@ -84,6 +85,7 @@
         <button id="topExportExcel" class="btn btn-secondary admin-only" onclick="exportExcel()">📊 Excel</button>
         <button id="topExportPDF" class="btn btn-secondary admin-only" onclick="exportPDF()">📄 PDF</button>
         <button class="btn btn-primary" onclick="fetchCloudData()">🔄 Sync</button>
+        <button class="btn btn-secondary" onclick="openChangePassword()">🔑 Password</button>
         <button class="btn btn-secondary" onclick="logoutUser()">Logout</button>
       </div>
     </header>
@@ -222,7 +224,7 @@
             <label>Role<select id="userRole" class="input"><option value="user">User</option><option value="admin">Admin</option></select></label>
             <button class="btn btn-primary w-full" type="submit">💾 Save User</button>
           </form>
-          <p class="small-note">Users are saved in Google Apps Script backend. Frontend passwords are no longer stored in browser code.</p>
+          <p class="small-note">In backend mode, users are saved in Google Apps Script. In local fallback mode, users are saved in this browser so you can keep working even if Apps Script is not updated.</p>
         </div>
         <div class="card lg:col-span-2">
           <div class="section-title"><h3>User Accounts</h3><button class="btn btn-secondary" onclick="resetDefaultUsers()">Reset Defaults</button></div>
@@ -231,6 +233,23 @@
       </div>
     </section>
   </main>
+
+
+  <section id="changePasswordModal" class="modal-overlay hidden no-print">
+    <div class="modal-card">
+      <div class="section-title">
+        <h3>🔑 Change Password</h3>
+        <button class="btn btn-secondary" type="button" onclick="closeChangePassword()">Close</button>
+      </div>
+      <form id="changePasswordForm" class="form-stack">
+        <label>Current Password<input id="currentPassword" class="input" type="password" required placeholder="Current password" /></label>
+        <label>New Password<input id="newPassword" class="input" type="password" required placeholder="New password" /></label>
+        <label>Confirm New Password<input id="confirmPassword" class="input" type="password" required placeholder="Repeat new password" /></label>
+        <button class="btn btn-primary w-full" type="submit">Save Password</button>
+      </form>
+      <p class="small-note">If the top badge says <b>LOCAL</b>, the password is changed in this browser. If it says backend/cloud, it is sent to Apps Script.</p>
+    </div>
+  </section>
 
   <script src="app.js"></script>
 </body>

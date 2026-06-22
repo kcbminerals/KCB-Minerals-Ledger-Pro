@@ -20,3 +20,79 @@ body.dark .auth-error{background:#450a0a;border-color:#7f1d1d;color:#fecaca}body
 .auth-logo-img{width:230px;max-width:88%;height:auto;display:block;margin:0 auto 18px;object-fit:contain}
 .brand-logo-img{width:54px;height:42px;object-fit:contain;border-radius:10px;background:#020617;padding:3px;border:1px solid #1e293b}
 @media(max-width:640px){.auth-logo-img{width:200px}}
+
+/* v3.5 fixes: clear text colors, dark mode, and modal */
+body:not(.dark) .hero-card .input,
+body:not(.dark) .hero-card select.input,
+body:not(.dark) .hero-card input.input {
+  background: #ffffff !important;
+  color: #0f172a !important;
+  border-color: rgba(255,255,255,.7) !important;
+}
+body:not(.dark) select.input option,
+body:not(.dark) .hero-card select option {
+  color: #0f172a !important;
+  background: #ffffff !important;
+}
+body:not(.dark) table td,
+body:not(.dark) .vehicle-card p,
+body:not(.dark) .mini-list p,
+body:not(.dark) .form-stack label {
+  color: #0f172a;
+}
+body:not(.dark) table small,
+body:not(.dark) .small-note,
+body:not(.dark) .topbar p {
+  color: #64748b;
+}
+body.dark .hero-card .input,
+body.dark .hero-card select.input,
+body.dark .hero-card input.input {
+  background: #020617 !important;
+  color: #e2e8f0 !important;
+  border-color: #475569 !important;
+}
+body.dark select.input option,
+body.dark .hero-card select option {
+  color: #e2e8f0 !important;
+  background: #020617 !important;
+}
+body.dark table td,
+body.dark .vehicle-card p,
+body.dark .mini-list p,
+body.dark .form-stack label {
+  color: #e2e8f0;
+}
+body.dark .stat-card,
+body.dark .card,
+body.dark .vehicle-card,
+body.dark .modal-card {
+  background: #0f172a;
+  border-color: #334155;
+}
+body.dark .segmented { background:#1e293b; }
+body.dark .segmented button.active { background:#334155; color:#93c5fd; }
+body.dark .sidebar { background:#020617; }
+body.dark .topbar { color:#e2e8f0; }
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 25000;
+  background: rgba(2,6,23,.62);
+  backdrop-filter: blur(6px);
+  display: grid;
+  place-items: center;
+  padding: 18px;
+}
+.modal-card {
+  width: min(460px, 100%);
+  background: #ffffff;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  padding: 24px;
+  box-shadow: 0 30px 90px rgba(2,6,23,.35);
+}
+.sync-text.connected { color:#86efac; }
+.sync-text.syncing { color:#fcd34d; }

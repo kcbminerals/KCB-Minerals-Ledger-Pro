@@ -1,71 +1,48 @@
-# KCB Minerals Ledger Pro v3.3
+# KCB Minerals Ledger Pro v3.5
 
-## What is included
+## Fixes in this version
 
-- `index.html` - website UI
-- `style.css` - website styling
-- `app.js` - website logic
-- `Code.gs` - Google Apps Script backend
-- `assets/logo.png` - KCB Minerals logo
+- Fixed `Sync failed` showing continuously.
+- Added legacy Google Apps Script sync fallback.
+- Added public read endpoint support: `getDataPublic`.
+- Fixed Dark Mode button.
+- Fixed light-mode select/dropdown text visibility.
+- Added Change Password button.
+- Added local fallback user creation so Admin can create users even before Apps Script auth is redeployed.
+- Added backend `changePassword` action in `Code.gs`.
+- Added your KCB Minerals logo.
 
-## Login
+## Default login
 
-Default accounts:
+Admin:
+- Username: `admin`
+- Password: `admin123`
 
-- Admin: `admin` / `admin123`
-- User: `user` / `user123`
-
-This version first tries secure backend login through Google Apps Script. If the backend is not updated or not reachable, it allows a local fallback login using the default accounts so you are not locked out.
-
-For real backend security, paste the included `Code.gs` into Apps Script and deploy a new Web App version.
+User:
+- Username: `user`
+- Password: `user123`
 
 ## GitHub upload
 
-Upload these files/folders to your GitHub repository root:
+Upload these to your GitHub repository root:
 
 - `index.html`
 - `style.css`
 - `app.js`
 - `README.md`
-- `assets/`
+- `assets/logo.png`
 
-## Google Apps Script upload
+After uploading, open the site and press **Ctrl + Shift + R**.
 
-1. Open your Apps Script project.
-2. Open `Code.gs`.
-3. Delete old code.
-4. Paste the included `Code.gs` code.
-5. Save.
-6. Deploy → Manage deployments → Edit → Version: New version → Deploy.
+## Apps Script upload
+
+Open Google Apps Script and replace your backend code with `Code.gs` from this package.
+Then redeploy:
+
+Deploy → Manage deployments → Edit → Version: New version → Deploy
 
 ## Important
 
-If you use a new Apps Script Web App URL, update the first line in `app.js`:
+If the top badge says `LOCAL`, the app is using local fallback login. You can still use the app, create local users, and change local passwords.
 
-```js
-const CLOUD_API_URL = "YOUR_NEW_EXEC_URL";
-```
-
-## Fix login if backend login fails
-
-In Apps Script editor:
-
-1. Select function `resetUsersToDefaultManual`.
-2. Click Run.
-3. Deploy a new version.
-4. Try login again.
-
-
-
-## Emergency login fix v3.4
-
-This build fixes the previous login screen problem caused by missing core browser utility functions in `app.js`.
-
-Default local login works immediately on GitHub Pages:
-
-- Admin: `admin` / `admin123`
-- User: `user` / `user123`
-
-The app still attempts Google Apps Script backend login first, but if the backend is not redeployed or not responding, it falls back to local login so you are not locked out.
-
-Important: upload the complete `assets` folder with `logo.png`, plus `index.html`, `style.css`, and `app.js`.
+For true cloud-secured users, paste `Code.gs` into Apps Script and redeploy a new version.

@@ -10,10 +10,24 @@ let paymentChart = null;
 let currentUser = null;
 
 const SESSION_KEY = "kcb_current_user";
-const LOCAL_FALLBACK_USERS = {
+const LOCAL_USERS_KEY = "kcb_local_users_v2";
+const DEFAULT_LOCAL_USERS = {
   admin: { password: "admin123", role: "admin" },
   user: { password: "user123", role: "user" }
 };
+
+function getLocalUsers() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LOCAL_USERS_KEY) || "null");
+    if (saved && typeof saved === "object" && saved.admin) return saved;
+  } catch {}
+  localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(DEFAULT_LOCAL_USERS));
+  return JSON.parse(JSON.stringify(DEFAULT_LOCAL_USERS));
+}
+
+function saveLocalUsers(users) {
+  localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(users || DEFAULT_LOCAL_USERS));
+}
 
 
 /* ===== Core browser utilities - required for login and app rendering ===== */
@@ -100,6 +114,24 @@ function finishQuietSync(message = "Connected") {
 }
 
 
+function toggleDarkMode() {
+  document.body.classList.toggle("dark");
+  localStorage.setItem("kcb_dark", document.body.classList.contains("dark") ? "true" : "false");
+  updateDashboardCharts();
+}
+
+function openChangePassword() {
+  const modal = $("changePasswordModal");
+  if (modal) modal.classList.remove("hidden");
+}
+
+function closeChangePassword() {
+  const modal = $("changePasswordModal");
+  if (modal) modal.classList.add("hidden");
+  $("changePasswordForm")?.reset();
+}
+
+
 function authMode() {
   return currentUser?.authMode || "backend";
 }
@@ -114,12 +146,12 @@ function backendAuthParams() {
 
 function localFallbackLogin(username, password) {
   const key = String(username || "").trim().toLowerCase();
-  const user = LOCAL_FALLBACK_USERS[key];
-  if (!user || String(password || "") !== user.password) return false;
+  const user = getLocalUsers()[key];
+  if (!user || String(password || "") !== String(user.password || "")) return false;
 
   currentUser = {
     username: key,
-    role: user.role,
+    role: user.role === "admin" ? "admin" : "user",
     token: "local-" + Date.now(),
     authMode: "local"
   };
@@ -131,7 +163,10 @@ function localFallbackLogin(username, password) {
   applyAccessControl();
   switchTab(isAdmin() ? "dashboard" : "logentry");
   fetchCloudData(false);
-  showToast("Logged in using local fallback mode", "warn");
+  showToast("Logged in");
+  if (String(password) === "admin123" || String(password) === "user123") {
+    setTimeout(() => showToast("Please change the default password", "warn"), 800);
+  }
   return true;
 }
 
@@ -324,10 +359,19 @@ function restoreLogin() {
 async function refreshUserList(showDoneToast = false) {
   const rows = $("usersRows");
   if (!rows || !isAdmin()) return;
+
   if (isLocalFallbackMode()) {
-    rows.innerHTML = `<tr><td colspan="3" class="center">User management requires backend login. Paste latest Code.gs into Apps Script and redeploy.</td></tr>`;
+    const users = getLocalUsers();
+    rows.innerHTML = "";
+    Object.keys(users).sort().forEach(username => {
+      const u = users[username];
+      const disabled = username === currentUser?.username ? "disabled" : "";
+      rows.insertAdjacentHTML("beforeend", `<tr><td><b>${escapeHTML(username)}</b></td><td>${escapeHTML(u.role)}</td><td class="center"><button class="btn btn-red" ${disabled} onclick="deleteUserAccount('${escapeHTML(username)}')">Delete</button></td></tr>`);
+    });
+    if (showDoneToast) showToast("Local users refreshed");
     return;
   }
+
   try {
     const data = await apiGet("listUsers", { token: requireSession() });
     if (!data.ok) throw new Error(data.error || "Unable to load users");
@@ -348,11 +392,21 @@ function renderUserManager() {
 
 function saveUserAccount() {
   if (!isAdmin()) return showToast("Only admin can manage users", "error");
-  if (isLocalFallbackMode()) return showToast("User management requires backend login", "error");
-  const username = $("userUsername").value.trim();
+  const username = $("userUsername").value.trim().toLowerCase();
   const password = $("userPassword").value.trim();
-  const role = $("userRole").value;
+  const role = $("userRole").value === "admin" ? "admin" : "user";
   if (!username || !password) return showToast("Enter username and password", "error");
+
+  if (isLocalFallbackMode()) {
+    const users = getLocalUsers();
+    users[username] = { password, role };
+    saveLocalUsers(users);
+    $("userForm").reset();
+    refreshUserList(true);
+    showToast("Local user saved");
+    return;
+  }
+
   postToCloud({ action: "saveUser", username, password, role }, { refreshData: false, successMessage: "User saved" });
   $("userForm").reset();
   setTimeout(() => refreshUserList(true), 1200);
@@ -360,19 +414,63 @@ function saveUserAccount() {
 
 function deleteUserAccount(username) {
   if (!isAdmin()) return showToast("Only admin can delete users", "error");
-  if (isLocalFallbackMode()) return showToast("User management requires backend login", "error");
+  username = String(username || "").trim().toLowerCase();
   if (username === currentUser?.username) return showToast("You cannot delete the logged-in user", "error");
   if (!confirm(`Delete user ${username}?`)) return;
+
+  if (isLocalFallbackMode()) {
+    const users = getLocalUsers();
+    const remainingAdmins = Object.keys(users).filter(k => k !== username && users[k].role === "admin").length;
+    if (users[username]?.role === "admin" && remainingAdmins < 1) return showToast("At least one admin is required", "error");
+    delete users[username];
+    saveLocalUsers(users);
+    refreshUserList(true);
+    showToast("Local user deleted");
+    return;
+  }
+
   postToCloud({ action: "deleteUser", username }, { refreshData: false, successMessage: "User deleted" });
   setTimeout(() => refreshUserList(true), 1200);
 }
 
 function resetDefaultUsers() {
   if (!isAdmin()) return;
-  if (isLocalFallbackMode()) return showToast("Reset users requires backend login", "error");
-  if (!confirm("Reset backend users to default admin/user accounts?")) return;
+  if (!confirm("Reset users to default admin/user accounts?")) return;
+
+  if (isLocalFallbackMode()) {
+    saveLocalUsers(JSON.parse(JSON.stringify(DEFAULT_LOCAL_USERS)));
+    refreshUserList(true);
+    showToast("Local default users restored");
+    return;
+  }
+
   postToCloud({ action: "resetUsers" }, { refreshData: false, successMessage: "Default users restored" });
   setTimeout(() => refreshUserList(true), 1200);
+}
+
+function changeCurrentPassword() {
+  if (!currentUser) return;
+  const currentPassword = $("currentPassword")?.value || "";
+  const newPassword = $("newPassword")?.value || "";
+  const confirmPassword = $("confirmPassword")?.value || "";
+
+  if (!newPassword || newPassword.length < 4) return showToast("New password must be at least 4 characters", "error");
+  if (newPassword !== confirmPassword) return showToast("New password and confirmation do not match", "error");
+
+  if (isLocalFallbackMode()) {
+    const users = getLocalUsers();
+    const u = users[currentUser.username];
+    if (!u) return showToast("Current user not found", "error");
+    if (String(u.password || "") !== String(currentPassword || "")) return showToast("Current password is incorrect", "error");
+    u.password = newPassword;
+    saveLocalUsers(users);
+    closeChangePassword();
+    showToast("Password changed");
+    return;
+  }
+
+  postToCloud({ action: "changePassword", currentPassword, newPassword }, { refreshData: false, successMessage: "Password change sent" });
+  closeChangePassword();
 }
 
 function switchTab(tabName) {
@@ -395,23 +493,70 @@ function switchTab(tabName) {
 async function fetchCloudData(showToastOnDone = true) {
   if (!currentUser) return;
   startQuietSync("Syncing with Drive...");
-  try {
-    const data = await apiGet("getData", backendAuthParams());
-    if (!data.ok && data.error) throw new Error(data.error);
-    applyCloudData(data);
-    finishQuietSync("Connected");
-    if (showToastOnDone) showToast("Cloud sync completed");
-  } catch (err) {
-    console.warn(err);
-    finishQuietSync("Sync failed");
-    if (String(err.message || "").toLowerCase().includes("session") || String(err.message || "").toLowerCase().includes("unauthorized")) {
-      logoutUser(false);
-      showToast("Session expired. Please login again.", "error");
-      return;
-    }
-    if (showToastOnDone) showToast("Cloud sync failed. Check Apps Script deployment.", "error");
-    loadLocalBackup();
+
+  const attempts = [];
+  if (!isLocalFallbackMode()) {
+    attempts.push(() => apiGet("getData", { token: requireSession() }));
   }
+  // Public read support for the fixed Code.gs package.
+  attempts.push(() => apiGet("getDataPublic", { t: Date.now() }));
+  // Legacy Apps Script support: older KCB backend returned data when callback was provided without an action.
+  attempts.push(() => legacyJsonpGetData());
+
+  for (const attempt of attempts) {
+    try {
+      const data = await attempt();
+      if (data && (data.vehicles || data.transactions || data.ok)) {
+        if (data.ok === false && data.error) throw new Error(data.error);
+        applyCloudData(data);
+        finishQuietSync(isLocalFallbackMode() ? "Connected / local login" : "Connected");
+        if (showToastOnDone) showToast("Cloud sync completed");
+        return;
+      }
+    } catch (err) {
+      console.warn("Sync attempt failed", err);
+    }
+  }
+
+  finishQuietSync("Offline backup");
+  loadLocalBackup();
+  if (showToastOnDone) showToast("Could not sync Drive. Showing local backup.", "warn");
+}
+
+function legacyJsonpGetData() {
+  return new Promise((resolve, reject) => {
+    const cb = "kcb_legacy_" + Date.now() + "_" + Math.floor(Math.random() * 100000);
+    const script = document.createElement("script");
+    let done = false;
+
+    const timer = setTimeout(() => {
+      if (done) return;
+      cleanup();
+      reject(new Error("Legacy backend timeout"));
+    }, 12000);
+
+    window[cb] = data => {
+      done = true;
+      cleanup();
+      resolve(data || {});
+    };
+
+    script.onerror = () => {
+      if (done) return;
+      cleanup();
+      reject(new Error("Legacy backend connection failed"));
+    };
+
+    function cleanup() {
+      clearTimeout(timer);
+      try { delete window[cb]; } catch {}
+      script.remove();
+    }
+
+    const sep = CLOUD_API_URL.includes("?") ? "&" : "?";
+    script.src = CLOUD_API_URL + sep + "callback=" + encodeURIComponent(cb) + "&t=" + Date.now();
+    document.body.appendChild(script);
+  });
 }
 
 function applyCloudData(data) {
@@ -447,17 +592,50 @@ function normalizeTx(tx) {
 
 async function postToCloud(payload, options = {}) {
   const { refreshData = true, successMessage = "Saved successfully" } = options;
+
+  if (isLocalFallbackMode()) {
+    applyLocalWrite(payload);
+  }
+
   const securedPayload = isLocalFallbackMode() ? { ...payload } : { ...payload, sessionToken: requireSession() };
   showLoading("Saving to Google Drive...");
   try {
     if (window.location.protocol === "file:") return postToCloudFallback(securedPayload, options);
     await fetch(CLOUD_API_URL, { method:"POST", mode:"no-cors", headers:{"Content-Type":"application/json"}, body:JSON.stringify(securedPayload) });
     hideLoading("Saved");
-    showToast(successMessage);
-    if (refreshData) setTimeout(() => fetchCloudData(false), 1200);
+    showToast(isLocalFallbackMode() ? successMessage + " (local + cloud attempted)" : successMessage);
+    if (refreshData && !isLocalFallbackMode()) setTimeout(() => fetchCloudData(false), 1200);
   } catch (err) {
     console.warn(err);
     postToCloudFallback(securedPayload, options);
+  }
+}
+
+function applyLocalWrite(payload) {
+  try {
+    if (payload.action === "saveVehicle") {
+      const vehicle = String(payload.vehicle || "").trim().toUpperCase();
+      if (!vehicle) return;
+      vehicles[vehicle] = {
+        distributorName: String(payload.distributorName || "").trim(),
+        distributorPhone: String(payload.distributorPhone || "").trim(),
+        rate: Number(payload.rate || 0),
+        updatedAt: Date.now(),
+        updatedBy: currentUser?.username || "local"
+      };
+    } else if (payload.action === "addTx" && payload.tx) {
+      const tx = normalizeTx(payload.tx);
+      const index = transactions.findIndex(t => Number(t.id) === Number(tx.id));
+      if (index >= 0) transactions[index] = tx;
+      else transactions.unshift(tx);
+      transactions.sort((a,b) => Number(b.timestamp || 0) - Number(a.timestamp || 0));
+    } else if (payload.action === "deleteTx") {
+      transactions = transactions.filter(t => Number(t.id) !== Number(payload.id));
+    }
+    localStorage.setItem("kcb_backup", JSON.stringify({ vehicles, transactions }));
+    renderAll();
+  } catch (err) {
+    console.warn("Local write failed", err);
   }
 }
 
@@ -865,6 +1043,11 @@ function bindForms() {
   $("userForm")?.addEventListener("submit", e => {
     e.preventDefault();
     saveUserAccount();
+  });
+
+  $("changePasswordForm")?.addEventListener("submit", e => {
+    e.preventDefault();
+    changeCurrentPassword();
   });
 
   $("vehicleForm").addEventListener("submit", e => {
