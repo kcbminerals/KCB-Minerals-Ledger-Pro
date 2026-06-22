@@ -15,6 +15,91 @@ const LOCAL_FALLBACK_USERS = {
   user: { password: "user123", role: "user" }
 };
 
+
+/* ===== Core browser utilities - required for login and app rendering ===== */
+function $(id) {
+  return document.getElementById(id);
+}
+
+function escapeHTML(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function formatINR(number) {
+  const value = Number(number || 0);
+  return "₹" + value.toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+}
+
+function cleanFormatDate(timestampOrStr) {
+  if (!timestampOrStr) return "-";
+  const dateObj = new Date(timestampOrStr);
+  if (Number.isNaN(dateObj.getTime())) return String(timestampOrStr);
+
+  const day = String(dateObj.getDate()).padStart(2, "0");
+  const month = String(dateObj.getMonth() + 1).padStart(2, "0");
+  const year = dateObj.getFullYear();
+  let hours = dateObj.getHours();
+  const minutes = String(dateObj.getMinutes()).padStart(2, "0");
+  const ampm = hours >= 12 ? "PM" : "AM";
+  hours = hours % 12 || 12;
+  return `${day}/${month}/${year} ${String(hours).padStart(2, "0")}:${minutes} ${ampm}`;
+}
+
+function showToast(message, type = "success") {
+  const toast = $("toast");
+  if (!toast) return;
+
+  toast.textContent = String(message || "");
+  toast.classList.remove("hidden");
+  toast.style.background =
+    type === "error" ? "#dc2626" :
+    type === "warn" ? "#f59e0b" :
+    "#0f172a";
+
+  clearTimeout(window.kcbToastTimer);
+  window.kcbToastTimer = setTimeout(() => {
+    toast.classList.add("hidden");
+  }, 3000);
+}
+
+function showLoading(message = "Loading...") {
+  const overlay = $("loadingOverlay");
+  const text = $("loadingText");
+  if (text) text.textContent = message;
+  if (overlay) overlay.classList.remove("hidden", "light-sync");
+}
+
+function hideLoading(message = "") {
+  const overlay = $("loadingOverlay");
+  if (overlay) overlay.classList.add("hidden");
+  if (message && message !== "Ready" && message !== "Saved") showToast(message);
+}
+
+function startQuietSync(message = "Syncing...") {
+  const indicator = $("syncIndicator");
+  if (indicator) {
+    indicator.textContent = "⌛ " + message;
+    indicator.className = "sync-text syncing";
+  }
+}
+
+function finishQuietSync(message = "Connected") {
+  const indicator = $("syncIndicator");
+  if (indicator) {
+    indicator.textContent = "🟢 " + message;
+    indicator.className = "sync-text connected";
+  }
+}
+
+
 function authMode() {
   return currentUser?.authMode || "backend";
 }

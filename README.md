@@ -55,3 +55,17 @@ In Apps Script editor:
 3. Deploy a new version.
 4. Try login again.
 
+
+
+## Emergency login fix v3.4
+
+This build fixes the previous login screen problem caused by missing core browser utility functions in `app.js`.
+
+Default local login works immediately on GitHub Pages:
+
+- Admin: `admin` / `admin123`
+- User: `user` / `user123`
+
+The app still attempts Google Apps Script backend login first, but if the backend is not redeployed or not responding, it falls back to local login so you are not locked out.
+
+Important: upload the complete `assets` folder with `logo.png`, plus `index.html`, `style.css`, and `app.js`.
