@@ -1,5 +1,8 @@
 const DEFAULT_CLOUD_API_URL = "https://script.google.com/macros/s/AKfycbyAJRWI2XiKLViz30C-VzaEPs2AX7cUJfOv1eiQcEphwiBB2GCX-y4j_4MiZbU2a0fC/exec";
-let CLOUD_API_URL = localStorage.getItem("kcb_backend_url") || DEFAULT_CLOUD_API_URL;
+// v4.1: connection is built in. Ignore old/wrong URLs saved on desktop/mobile browsers.
+// If you create a brand-new Apps Script deployment, replace only the URL above once.
+let CLOUD_API_URL = DEFAULT_CLOUD_API_URL;
+try { localStorage.removeItem("kcb_backend_url"); } catch {}
 
 let vehicles = {};
 let transactions = [];
@@ -122,29 +125,24 @@ function hydrateBackendUrlInputs() {
   });
 }
 
-function saveBackendUrl(sourceId = "backendUrlInput") {
-  const el = $(sourceId) || $("backendUrlInput") || $("backendUrlInputSidebar");
-  const url = String(el?.value || "").trim();
-  if (!url || !url.includes("script.google.com") || !url.includes("/exec")) {
-    showToast("Paste the Apps Script Web App URL ending with /exec", "error");
-    return;
-  }
-  CLOUD_API_URL = url;
-  localStorage.setItem("kcb_backend_url", url);
+function saveBackendUrl() {
+  // v4.1: the Google Apps Script connection is built into app.js.
+  CLOUD_API_URL = DEFAULT_CLOUD_API_URL;
+  try { localStorage.removeItem("kcb_backend_url"); } catch {}
   hydrateBackendUrlInputs();
-  showToast("Google Sheet connection URL saved");
+  showToast("Using built-in Google Sheet connection");
   testBackendConnection();
 }
 
 async function testBackendConnection() {
   try {
-    startQuietSync("Testing Google Sheet connection...");
+    startQuietSync("Testing built-in Google Sheet connection...");
     const health = await apiGet("health", { t: Date.now() });
     if (health && health.ok) {
       finishQuietSync("Connected to Google Sheet");
-      showToast("Google Sheet connected");
+      showToast("Built-in Google Sheet connection working");
       const help = $("backendStatusText");
-      if (help) help.innerHTML = "✅ Connected: " + escapeHTML(health.authVersion || "backend ok");
+      if (help) help.innerHTML = "✅ Built-in connection active: " + escapeHTML(health.authVersion || "backend ok");
       return true;
     }
     throw new Error(health?.error || "Backend health check failed");
@@ -253,7 +251,7 @@ function apiGet(action, params = {}) {
     script.onerror = () => {
       if (done) return;
       cleanup();
-      reject(new Error("Unable to connect to Apps Script backend. Check Web App access is set to Anyone."));
+      reject(new Error("Unable to connect to built-in Apps Script backend. Redeploy Web App with access set to Anyone."));
     };
 
     function cleanup() {
@@ -579,7 +577,7 @@ async function fetchCloudData(showToastOnDone = true) {
   finishQuietSync("Google Sheet not connected");
   loadLocalBackup(false);
   if (showToastOnDone) {
-    showToast("Could not sync Google Sheet. Open Connection Setup and check the Apps Script /exec URL.", "error");
+    showToast("Could not sync Google Sheet. Please redeploy Apps Script as Web App: access = Anyone.", "error");
   }
   showSyncHelp();
 }

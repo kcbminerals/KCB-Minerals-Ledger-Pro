@@ -23,7 +23,7 @@
 
   <section id="loginScreen" class="auth-screen no-print">
     <div class="auth-card">
-      <img src="./assets/logo.png" alt="KCB Minerals Logo" class="auth-logo-img" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'logo-fallback big',textContent:'KCB'}))" />
+      <img src="assets/logo.png" alt="KCB Minerals Logo" class="auth-logo-img" />
       <h1>KCB Minerals Ledger</h1>
       <p class="auth-subtitle">Secure login with shared Google Sheet backend</p>
       <form id="loginForm" class="form-stack">
@@ -36,23 +36,13 @@
         Admin: <code>admin</code> / <code>admin123</code><br />
         User: <code>user</code> / <code>user123</code><br />
         <small>Change these from the Admin Users page after first login.</small>
-        <details class="backend-setup mt-3">
-          <summary>Google Sheet connection setup</summary>
-          <p>Paste your Apps Script Web App URL ending with <code>/exec</code>.</p>
-          <input id="backendUrlInput" class="input" placeholder="https://script.google.com/macros/s/.../exec" />
-          <div class="backend-actions">
-            <button type="button" class="btn btn-primary" onclick="saveBackendUrl('backendUrlInput')">Save URL</button>
-            <button type="button" class="btn btn-secondary" onclick="testBackendConnection()">Test</button>
-          </div>
-          <small id="backendStatusText"></small>
-        </details>
       </div>
     </div>
   </section>
 
   <aside class="sidebar no-print">
     <div class="brand">
-      <img src="./assets/logo.png" alt="KCB Minerals Logo" class="brand-logo-img" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'logo-fallback',textContent:'KCB'}))" />
+      <img src="assets/logo.png" alt="KCB Minerals Logo" class="brand-logo-img" />
       <div>
         <h1>KCB Minerals</h1>
         <p>Cloud Ledger Pro</p>
@@ -78,7 +68,6 @@
         <small id="sidebarUserRole">-</small>
       </div>
       <button class="btn btn-primary w-full" onclick="fetchCloudData()">🔄 Sync Sheet</button>
-      <button class="btn btn-secondary w-full mt-2" onclick="openBackendSettings()">🔗 Connection</button>
       <button class="btn btn-secondary w-full mt-2" onclick="toggleDarkMode()">🌙 Dark Mode</button>
       <button class="btn btn-secondary w-full mt-2" onclick="logoutUser()">🚪 Logout</button>
     </div>
@@ -98,10 +87,6 @@
         <button class="btn btn-secondary" onclick="logoutUser()">Logout</button>
       </div>
     </header>
-
-    <div id="syncHelpBox" class="sync-help hidden no-print">
-      <b>Google Sheet is not connected.</b> Click <b>Connection</b>, paste your Apps Script Web App URL ending with <code>/exec</code>, then press <b>Test</b>.
-    </div>
 
     <section id="page-dashboard" class="tab-page page-space">
       <div class="hero-card">
@@ -247,21 +232,6 @@
     </section>
   </main>
 
-  <div id="backendSettingsModal" class="modal hidden no-print">
-    <div class="modal-card">
-      <div class="flex justify-between items-center gap-3 mb-4">
-        <h3>Google Sheet Connection</h3>
-        <button class="btn btn-secondary" onclick="closeBackendSettings()">Close</button>
-      </div>
-      <p class="muted mb-3">Use the Apps Script Web App URL from Deploy → Manage deployments. It must end with <code>/exec</code>.</p>
-      <input id="backendUrlInputSidebar" class="input" placeholder="https://script.google.com/macros/s/.../exec" />
-      <div class="backend-actions mt-3">
-        <button class="btn btn-primary" onclick="saveBackendUrl('backendUrlInputSidebar')">Save URL</button>
-        <button class="btn btn-secondary" onclick="testBackendConnection()">Test Connection</button>
-      </div>
-    </div>
-  </div>
-
-  <script src="app.js?v=4.0"></script>
+  <script src="app.js"></script>
 </body>
 </html>

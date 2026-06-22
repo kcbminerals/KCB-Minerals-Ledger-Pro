@@ -1,17 +1,18 @@
-# KCB Minerals Ledger Pro v3.9 - Mobile/Desktop Shared Sync Fix
+# KCB Minerals Ledger Pro v4.1 - Built-in Connection Fix
 
-## Fixes in this version
+This version removes the repeated Connection Setup requirement.
 
-- Desktop and mobile now use the same backend login instead of local-only users.
-- Backend health detection accepts the Google Sheets backend version correctly.
-- Previous Google Sheet data is loaded through `getData/getDataPublic` from the shared Apps Script backend.
-- Log entries and registrations continue to save to the same Google Sheet.
-- Mobile layout is reorganized with horizontal navigation, compact sidebar, better buttons, and cleaner cards.
-- Sync remains quiet: no white full-screen syncing page.
+## What changed
+
+- The Apps Script `/exec` connection is built into `app.js`.
+- Old wrong mobile/desktop saved backend URLs are ignored automatically.
+- Sync no longer asks for connection URL.
+- Sync error message now points to Apps Script deployment/access if the backend is unreachable.
+- Logo remains at `assets/logo.png`.
 
 ## Upload to GitHub
 
-Upload/replace:
+Upload these files to the repository root:
 
 - `index.html`
 - `style.css`
@@ -19,49 +20,29 @@ Upload/replace:
 - `README.md`
 - `assets/logo.png`
 
-Then open the website and hard refresh:
+## Apps Script setup
 
-- Desktop: `Ctrl + Shift + R`
-- Mobile Chrome: open in Incognito once, or clear site data for your GitHub Pages URL.
+Open your old Google Sheet, then:
 
-## Upload to Google Apps Script
+`Extensions → Apps Script`
 
-Open your OLD Google Sheet → Extensions → Apps Script.
+Paste `Code.gs`, save, then redeploy:
 
-Replace `Code.gs` with the new `Code.gs` from this package.
+`Deploy → Manage deployments → Edit → Version: New version → Deploy`
 
-Deploy:
+The Web App deployment must be:
 
-Deploy → Manage deployments → Edit → Version: New version → Deploy
+- Execute as: Me
+- Who has access: Anyone
 
-## Verify
+## Important
 
-Open your Apps Script `/exec` URL with:
+The built-in URL inside `app.js` is:
 
-`?action=health`
+`https://script.google.com/macros/s/AKfycbyAJRWI2XiKLViz30C-VzaEPs2AX7cUJfOv1eiQcEphwiBB2GCX-y4j_4MiZbU2a0fC/exec`
 
-It should show:
+If you create a completely new deployment with a different `/exec` URL, replace only this one line in `app.js`:
 
-`authVersion: 3.9-mobile-desktop-sync`
+`const DEFAULT_CLOUD_API_URL = ".../exec";`
 
-Then open:
-
-`?action=getDataPublic`
-
-The data shown there is what both mobile and desktop will load.
-
-## Important about users
-
-Users created while the app showed `LOCAL` were saved only on that device.
-This v3.9 version uses backend login when Apps Script is deployed correctly, so users created by admin will work on both desktop and mobile.
-
-
-## v4.0 fixes
-
-- Files are packaged at ZIP root, not inside a nested folder.
-- Logo path fixed: `./assets/logo.png`.
-- Added Connection setup inside the app. If sync fails, paste your Apps Script Web App `/exec` URL there and press Test.
-- Sync failure no longer says “device backup” as the main status; it tells you Google Sheet is not connected.
-- Apps Script health version should show `4.0-sync-url-logo-fix`.
-
-After uploading to GitHub, hard refresh desktop with Ctrl+Shift+R. On mobile, clear site data or open once in Incognito.
+Then upload `app.js` again.
