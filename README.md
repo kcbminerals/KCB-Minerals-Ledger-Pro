@@ -1,86 +1,46 @@
-# KCB Minerals Ledger Pro v3.6 - Google Sheets Fix
+# KCB Minerals Ledger Pro v3.7 - Existing Google Sheet Fix
 
-## What this version fixes
+This version fixes the issue where Apps Script created a new Google Sheet.
 
-- New vehicle registrations are saved into a real Google Sheet.
-- Load entries and payment entries are saved into a real Google Sheet.
-- Existing old JSON Drive data is automatically migrated into the sheet once.
-- Better light/dark color contrast.
-- Local fallback login can still submit entry data to Google Sheets.
+## Important
 
-## Files for GitHub
-
-Upload these files/folders to your GitHub repository root:
-
-- `index.html`
-- `style.css`
-- `app.js`
-- `README.md`
-- `assets/logo.png`
-
-After upload, open your website and press `Ctrl + Shift + R`.
-
-## File for Google Apps Script
-
-Open Google Apps Script and replace your backend with:
-
-- `Code.gs`
-
-Then redeploy:
-
-`Deploy → Manage deployments → Edit → Version: New version → Deploy`
-
-Saving Code.gs is not enough. You must deploy a new version.
-
-## Where your data appears
-
-This backend creates or uses a Google Sheet named:
-
-`KCB_Minerals_Ledger_Data`
-
-It contains two sheets:
-
-- `Vehicles`
-- `Transactions`
-
-Find it in the same Google Drive account that owns/runs the Apps Script deployment.
-
-## Existing Google Sheet
-
-If you already have a specific Google Sheet and want the data to go there, open `Code.gs` and paste the Sheet ID here:
+To use your OLD Google Sheet, open `Code.gs` and set:
 
 ```javascript
-const SPREADSHEET_ID = '';
+const SPREADSHEET_ID = 'PASTE_YOUR_OLD_SHEET_ID_HERE';
 ```
 
-Example:
+The Sheet ID is the long part in your Google Sheet URL:
 
-```javascript
-const SPREADSHEET_ID = 'PASTE_YOUR_SHEET_ID_HERE';
+```text
+https://docs.google.com/spreadsheets/d/SHEET_ID_HERE/edit
 ```
 
-Then redeploy Apps Script again.
+If your Apps Script is attached directly to the old Google Sheet, this version will also try to use that attached Sheet automatically.
 
-## Test backend
+## Required sheet tabs
 
-Open your Apps Script web app URL and add:
+The backend will create these tabs in your old Sheet if they do not exist:
 
-`?action=health`
+- Vehicles
+- Transactions
 
-You should see:
+## Deploy
 
-`authVersion: 3.6-fixed-login-sheets`
+After changing Code.gs:
 
-and a `spreadsheetUrl`.
+Deploy -> Manage deployments -> Edit -> Version: New version -> Deploy
 
-## Login
+Then open:
 
-Admin:
+```text
+YOUR_APPS_SCRIPT_URL?action=health
+```
 
-- username: `admin`
-- password: `admin123`
+It should show:
 
-User:
+```text
+authVersion: 3.7-use-existing-sheet
+```
 
-- username: `user`
-- password: `user123`
+and the `spreadsheetUrl` should be your OLD Google Sheet URL.
