@@ -10,6 +10,45 @@ let paymentChart = null;
 let currentUser = null;
 
 const SESSION_KEY = "kcb_current_user";
+const LOCAL_FALLBACK_USERS = {
+  admin: { password: "admin123", role: "admin" },
+  user: { password: "user123", role: "user" }
+};
+
+function authMode() {
+  return currentUser?.authMode || "backend";
+}
+
+function isLocalFallbackMode() {
+  return authMode() === "local";
+}
+
+function backendAuthParams() {
+  return isLocalFallbackMode() ? {} : { token: requireSession() };
+}
+
+function localFallbackLogin(username, password) {
+  const key = String(username || "").trim().toLowerCase();
+  const user = LOCAL_FALLBACK_USERS[key];
+  if (!user || String(password || "") !== user.password) return false;
+
+  currentUser = {
+    username: key,
+    role: user.role,
+    token: "local-" + Date.now(),
+    authMode: "local"
+  };
+
+  localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
+  document.body.classList.remove("auth-locked");
+  const box = document.getElementById("loginErrorBox");
+  if (box) box.innerHTML = "";
+  applyAccessControl();
+  switchTab(isAdmin() ? "dashboard" : "logentry");
+  fetchCloudData(false);
+  showToast("Logged in using local fallback mode", "warn");
+  return true;
+}
 
 function apiGet(action, params = {}) {
   return new Promise((resolve, reject) => {
@@ -65,6 +104,7 @@ async function checkBackendHealth() {
 
 function requireSession() {
   const token = currentUser?.token;
+  if (isLocalFallbackMode()) return token || "local";
   if (!token) {
     logoutUser(false);
     throw new Error("Session expired. Please login again.");
@@ -95,61 +135,71 @@ function applyAccessControl() {
   const name = currentUser?.username || "Guest";
   const role = currentUser?.role || "-";
   if ($("topUserName")) $("topUserName").textContent = name;
-  if ($("topUserRole")) $("topUserRole").textContent = role;
+  if ($("topUserRole")) $("topUserRole").textContent = isLocalFallbackMode() ? role + " / local" : role;
   if ($("sidebarUserName")) $("sidebarUserName").textContent = name;
-  if ($("sidebarUserRole")) $("sidebarUserRole").textContent = role;
+  if ($("sidebarUserRole")) $("sidebarUserRole").textContent = isLocalFallbackMode() ? role + " / local" : role;
   if (isAdmin()) refreshUserList(false);
 }
 
 async function loginUser(username, password) {
+  username = String(username || "").trim().toLowerCase();
+  password = String(password || "");
+
   try {
     showLoginHelp("");
-    showLoading("Checking backend...");
-
-    let health;
-    try {
-      health = await checkBackendHealth();
-    } catch (healthErr) {
-      hideLoading("Login failed");
-      const msg = escapeHTML(healthErr.message || "Backend not reachable");
-      showLoginHelp(`<b>Backend connection failed.</b><br>${msg}<br><br>Fix: paste the latest <code>Code.gs</code>, save, then Deploy → Manage deployments → Edit → New version → Deploy. Also confirm the first line of <code>app.js</code> has your latest <code>/exec</code> URL.`);
-      showToast("Backend not connected", "error");
-      return false;
-    }
-
-    if (!health.ok || !String(health.authVersion || "").includes("fixed-login")) {
-      hideLoading("Login failed");
-      showLoginHelp(`<b>Apps Script is still using old code.</b><br>Please replace <code>Code.gs</code> with the latest file, save it, and redeploy as a new version.`);
-      showToast("Apps Script code is outdated", "error");
-      return false;
-    }
-
     showLoading("Checking login...");
-    const data = await apiGet("login", { username: String(username || "").trim().toLowerCase(), password });
+
+    // First try the secure Google Apps Script backend login.
+    try {
+      const health = await checkBackendHealth();
+      if (health && health.ok && String(health.authVersion || "").includes("fixed-login")) {
+        const data = await apiGet("login", { username, password });
+        hideLoading("Ready");
+
+        if (data && data.ok) {
+          currentUser = {
+            username: data.user.username,
+            role: data.user.role,
+            token: data.token,
+            authMode: "backend"
+          };
+
+          localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
+          document.body.classList.remove("auth-locked");
+          const box = document.getElementById("loginErrorBox");
+          if (box) box.innerHTML = "";
+          applyAccessControl();
+          switchTab(isAdmin() ? "dashboard" : "logentry");
+          fetchCloudData(false);
+          showToast(`Welcome ${currentUser.username}`);
+          return true;
+        }
+
+        // Backend replied but credentials failed. Then try only the default local fallback.
+        if (localFallbackLogin(username, password)) {
+          showLoginHelp(`<b>Backend rejected the password, so local fallback was used.</b><br>To make backend login work, run <code>resetUsersToDefaultManual</code> in Apps Script and deploy a new version.`);
+          return true;
+        }
+
+        showLoginHelp(`<b>${escapeHTML(data.error || "Invalid username or password")}</b><br><br>Try default accounts:<br>Admin: <code>admin</code> / <code>admin123</code><br>User: <code>user</code> / <code>user123</code>`);
+        showToast(data.error || "Invalid username or password", "error");
+        return false;
+      }
+    } catch (backendErr) {
+      console.warn("Backend login unavailable, trying local fallback", backendErr);
+    }
+
     hideLoading("Ready");
 
-    if (!data.ok) {
-      const err = escapeHTML(data.error || "Invalid username or password");
-      showLoginHelp(`<b>${err}</b><br><br>If default login fails, open Apps Script, select <code>resetUsersToDefaultManual</code>, click <b>Run</b>, then redeploy and try:<br>Admin: <code>admin</code> / <code>admin123</code>`);
-      showToast(data.error || "Invalid username or password", "error");
-      return false;
+    // Reliable fallback so the app does not get stuck at login while Apps Script is being fixed.
+    if (localFallbackLogin(username, password)) {
+      showLoginHelp(`<b>Local fallback login active.</b><br>Your Google Apps Script backend is not responding with the new auth code. The app can still open, but for true backend security paste the latest <code>Code.gs</code> and redeploy a new Web App version.`);
+      return true;
     }
 
-    currentUser = {
-      username: data.user.username,
-      role: data.user.role,
-      token: data.token
-    };
-
-    localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
-    document.body.classList.remove("auth-locked");
-    const box = document.getElementById("loginErrorBox");
-    if (box) box.innerHTML = "";
-    applyAccessControl();
-    switchTab(isAdmin() ? "dashboard" : "logentry");
-    fetchCloudData(false);
-    showToast(`Welcome ${currentUser.username}`);
-    return true;
+    showLoginHelp(`<b>Invalid username or password.</b><br><br>Use:<br>Admin: <code>admin</code> / <code>admin123</code><br>User: <code>user</code> / <code>user123</code>`);
+    showToast("Invalid username or password", "error");
+    return false;
   } catch (err) {
     hideLoading("Login failed");
     const msg = escapeHTML(err.message || "Login failed");
@@ -189,6 +239,10 @@ function restoreLogin() {
 async function refreshUserList(showDoneToast = false) {
   const rows = $("usersRows");
   if (!rows || !isAdmin()) return;
+  if (isLocalFallbackMode()) {
+    rows.innerHTML = `<tr><td colspan="3" class="center">User management requires backend login. Paste latest Code.gs into Apps Script and redeploy.</td></tr>`;
+    return;
+  }
   try {
     const data = await apiGet("listUsers", { token: requireSession() });
     if (!data.ok) throw new Error(data.error || "Unable to load users");
@@ -209,6 +263,7 @@ function renderUserManager() {
 
 function saveUserAccount() {
   if (!isAdmin()) return showToast("Only admin can manage users", "error");
+  if (isLocalFallbackMode()) return showToast("User management requires backend login", "error");
   const username = $("userUsername").value.trim();
   const password = $("userPassword").value.trim();
   const role = $("userRole").value;
@@ -220,6 +275,7 @@ function saveUserAccount() {
 
 function deleteUserAccount(username) {
   if (!isAdmin()) return showToast("Only admin can delete users", "error");
+  if (isLocalFallbackMode()) return showToast("User management requires backend login", "error");
   if (username === currentUser?.username) return showToast("You cannot delete the logged-in user", "error");
   if (!confirm(`Delete user ${username}?`)) return;
   postToCloud({ action: "deleteUser", username }, { refreshData: false, successMessage: "User deleted" });
@@ -228,6 +284,7 @@ function deleteUserAccount(username) {
 
 function resetDefaultUsers() {
   if (!isAdmin()) return;
+  if (isLocalFallbackMode()) return showToast("Reset users requires backend login", "error");
   if (!confirm("Reset backend users to default admin/user accounts?")) return;
   postToCloud({ action: "resetUsers" }, { refreshData: false, successMessage: "Default users restored" });
   setTimeout(() => refreshUserList(true), 1200);
@@ -254,7 +311,7 @@ async function fetchCloudData(showToastOnDone = true) {
   if (!currentUser) return;
   startQuietSync("Syncing with Drive...");
   try {
-    const data = await apiGet("getData", { token: requireSession() });
+    const data = await apiGet("getData", backendAuthParams());
     if (!data.ok && data.error) throw new Error(data.error);
     applyCloudData(data);
     finishQuietSync("Connected");
@@ -305,7 +362,7 @@ function normalizeTx(tx) {
 
 async function postToCloud(payload, options = {}) {
   const { refreshData = true, successMessage = "Saved successfully" } = options;
-  const securedPayload = { ...payload, sessionToken: requireSession() };
+  const securedPayload = isLocalFallbackMode() ? { ...payload } : { ...payload, sessionToken: requireSession() };
   showLoading("Saving to Google Drive...");
   try {
     if (window.location.protocol === "file:") return postToCloudFallback(securedPayload, options);
