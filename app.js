@@ -1,4 +1,4 @@
-const CLOUD_API_URL = "https://script.google.com/macros/s/AKfycbyAJRWI2XiKLViz30C-VzaEPs2AX7cUJfOv1eiQcEphwiBB2GCX-y4j_4MiZbU2a0fC/exec";
+const CLOUD_API_URL = "https://script.google.com/macros/s/AKfycbyfSZsijksfKuDJI7gC54CooMmY7dDAwn1Z6drGiIMLUGVaSnE961_IIxV0Ev5sq84yoQ/exec";
 
 let vehicles = {};
 let transactions = [];
