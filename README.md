@@ -1,30 +1,16 @@
-# KCB Minerals Ledger Pro v3.5
+# KCB Minerals Ledger Pro v3.6 - Google Sheets Fix
 
-## Fixes in this version
+## What this version fixes
 
-- Fixed `Sync failed` showing continuously.
-- Added legacy Google Apps Script sync fallback.
-- Added public read endpoint support: `getDataPublic`.
-- Fixed Dark Mode button.
-- Fixed light-mode select/dropdown text visibility.
-- Added Change Password button.
-- Added local fallback user creation so Admin can create users even before Apps Script auth is redeployed.
-- Added backend `changePassword` action in `Code.gs`.
-- Added your KCB Minerals logo.
+- New vehicle registrations are saved into a real Google Sheet.
+- Load entries and payment entries are saved into a real Google Sheet.
+- Existing old JSON Drive data is automatically migrated into the sheet once.
+- Better light/dark color contrast.
+- Local fallback login can still submit entry data to Google Sheets.
 
-## Default login
+## Files for GitHub
 
-Admin:
-- Username: `admin`
-- Password: `admin123`
-
-User:
-- Username: `user`
-- Password: `user123`
-
-## GitHub upload
-
-Upload these to your GitHub repository root:
+Upload these files/folders to your GitHub repository root:
 
 - `index.html`
 - `style.css`
@@ -32,17 +18,69 @@ Upload these to your GitHub repository root:
 - `README.md`
 - `assets/logo.png`
 
-After uploading, open the site and press **Ctrl + Shift + R**.
+After upload, open your website and press `Ctrl + Shift + R`.
 
-## Apps Script upload
+## File for Google Apps Script
 
-Open Google Apps Script and replace your backend code with `Code.gs` from this package.
+Open Google Apps Script and replace your backend with:
+
+- `Code.gs`
+
 Then redeploy:
 
-Deploy → Manage deployments → Edit → Version: New version → Deploy
+`Deploy → Manage deployments → Edit → Version: New version → Deploy`
 
-## Important
+Saving Code.gs is not enough. You must deploy a new version.
 
-If the top badge says `LOCAL`, the app is using local fallback login. You can still use the app, create local users, and change local passwords.
+## Where your data appears
 
-For true cloud-secured users, paste `Code.gs` into Apps Script and redeploy a new version.
+This backend creates or uses a Google Sheet named:
+
+`KCB_Minerals_Ledger_Data`
+
+It contains two sheets:
+
+- `Vehicles`
+- `Transactions`
+
+Find it in the same Google Drive account that owns/runs the Apps Script deployment.
+
+## Existing Google Sheet
+
+If you already have a specific Google Sheet and want the data to go there, open `Code.gs` and paste the Sheet ID here:
+
+```javascript
+const SPREADSHEET_ID = '';
+```
+
+Example:
+
+```javascript
+const SPREADSHEET_ID = 'PASTE_YOUR_SHEET_ID_HERE';
+```
+
+Then redeploy Apps Script again.
+
+## Test backend
+
+Open your Apps Script web app URL and add:
+
+`?action=health`
+
+You should see:
+
+`authVersion: 3.6-fixed-login-sheets`
+
+and a `spreadsheetUrl`.
+
+## Login
+
+Admin:
+
+- username: `admin`
+- password: `admin123`
+
+User:
+
+- username: `user`
+- password: `user123`

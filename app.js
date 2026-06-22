@@ -509,8 +509,8 @@ async function fetchCloudData(showToastOnDone = true) {
       if (data && (data.vehicles || data.transactions || data.ok)) {
         if (data.ok === false && data.error) throw new Error(data.error);
         applyCloudData(data);
-        finishQuietSync(isLocalFallbackMode() ? "Connected / local login" : "Connected");
-        if (showToastOnDone) showToast("Cloud sync completed");
+        finishQuietSync(isLocalFallbackMode() ? "Connected to Sheet / local login" : "Connected to Sheet");
+        if (showToastOnDone) showToast("Google Sheet sync completed");
         return;
       }
     } catch (err) {
@@ -603,7 +603,7 @@ async function postToCloud(payload, options = {}) {
     if (window.location.protocol === "file:") return postToCloudFallback(securedPayload, options);
     await fetch(CLOUD_API_URL, { method:"POST", mode:"no-cors", headers:{"Content-Type":"application/json"}, body:JSON.stringify(securedPayload) });
     hideLoading("Saved");
-    showToast(isLocalFallbackMode() ? successMessage + " (local + cloud attempted)" : successMessage);
+    showToast(isLocalFallbackMode() ? successMessage + " (saved locally + Google Sheet attempted)" : successMessage);
     if (refreshData && !isLocalFallbackMode()) setTimeout(() => fetchCloudData(false), 1200);
   } catch (err) {
     console.warn(err);

@@ -96,3 +96,48 @@ body.dark .topbar { color:#e2e8f0; }
 }
 .sync-text.connected { color:#86efac; }
 .sync-text.syncing { color:#fcd34d; }
+
+/* v3.6 contrast improvements */
+:root{
+  --bg:#eef4fb;
+  --card:#ffffff;
+  --text:#071529;
+  --muted:#334155;
+  --border:#cbd5e1;
+  --sidebar:#07111f;
+}
+body{color:#071529;background:var(--bg)}
+.card,.stat-card{box-shadow:0 12px 30px rgba(2,6,23,.08)}
+.input{color:#071529;background:#ffffff;border-color:#94a3b8;font-weight:600}
+.input::placeholder{color:#64748b}
+select.input option{color:#071529;background:#ffffff}
+th{color:#1e293b;background:#eaf1f8;border-bottom:1px solid #cbd5e1}
+td{color:#071529}
+tbody tr:hover{background:#dbeafe}
+.form-stack label,.vehicle-card p,.mini-list p{color:#071529}
+.vehicle-card{background:#ffffff;border-color:#cbd5e1}
+.vehicle-card h4{color:#071529}
+.btn-secondary{background:#dbe4ef;color:#071529;border:1px solid #cbd5e1}
+.segmented{background:#dbe4ef}.segmented button{color:#1e293b}.segmented button.active{background:#ffffff;color:#1d4ed8}
+.topbar{background:rgba(255,255,255,.96);color:#071529}.topbar p{color:#475569}
+.hero-card{background:linear-gradient(135deg,#1d4ed8,#0891b2)}
+.hero-card .input{box-shadow:0 8px 20px rgba(2,6,23,.12)}
+body.dark{
+  --bg:#020617;
+  --card:#0b1220;
+  --text:#f8fafc;
+  --muted:#cbd5e1;
+  --border:#475569;
+  --sidebar:#020617;
+}
+body.dark .card,body.dark .stat-card,body.dark .vehicle-card{background:#0b1220;color:#f8fafc;border-color:#475569}
+body.dark td,body.dark .form-stack label,body.dark .vehicle-card p,body.dark .mini-list p{color:#f8fafc!important}
+body.dark th{background:#1e293b;color:#f8fafc}
+body.dark tbody tr:hover{background:#172554}
+body.dark .input{background:#020617!important;color:#f8fafc!important;border-color:#64748b!important}
+body.dark .input::placeholder{color:#cbd5e1}
+body.dark select.input option{background:#020617!important;color:#f8fafc!important}
+body.dark .topbar{background:rgba(2,6,23,.96);color:#f8fafc}
+body.dark .topbar p,body.dark .small-note{color:#cbd5e1!important}
+body.dark .btn-secondary{background:#334155;color:#ffffff;border-color:#64748b}
+body.dark .segmented{background:#1e293b}body.dark .segmented button{color:#cbd5e1}body.dark .segmented button.active{background:#475569;color:#ffffff}
