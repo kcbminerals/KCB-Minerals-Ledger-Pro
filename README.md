@@ -54,3 +54,14 @@ The data shown there is what both mobile and desktop will load.
 
 Users created while the app showed `LOCAL` were saved only on that device.
 This v3.9 version uses backend login when Apps Script is deployed correctly, so users created by admin will work on both desktop and mobile.
+
+
+## v4.0 fixes
+
+- Files are packaged at ZIP root, not inside a nested folder.
+- Logo path fixed: `./assets/logo.png`.
+- Added Connection setup inside the app. If sync fails, paste your Apps Script Web App `/exec` URL there and press Test.
+- Sync failure no longer says “device backup” as the main status; it tells you Google Sheet is not connected.
+- Apps Script health version should show `4.0-sync-url-logo-fix`.
+
+After uploading to GitHub, hard refresh desktop with Ctrl+Shift+R. On mobile, clear site data or open once in Incognito.

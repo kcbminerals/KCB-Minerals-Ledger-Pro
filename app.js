@@ -1,4 +1,5 @@
-const CLOUD_API_URL = "https://script.google.com/macros/s/AKfycbyAJRWI2XiKLViz30C-VzaEPs2AX7cUJfOv1eiQcEphwiBB2GCX-y4j_4MiZbU2a0fC/exec";
+const DEFAULT_CLOUD_API_URL = "https://script.google.com/macros/s/AKfycbyAJRWI2XiKLViz30C-VzaEPs2AX7cUJfOv1eiQcEphwiBB2GCX-y4j_4MiZbU2a0fC/exec";
+let CLOUD_API_URL = localStorage.getItem("kcb_backend_url") || DEFAULT_CLOUD_API_URL;
 
 let vehicles = {};
 let transactions = [];
@@ -113,6 +114,66 @@ function finishQuietSync(message = "Connected") {
   }
 }
 
+function hydrateBackendUrlInputs() {
+  const current = CLOUD_API_URL || "";
+  ["backendUrlInput", "backendUrlInputSidebar"].forEach(id => {
+    const el = $(id);
+    if (el) el.value = current;
+  });
+}
+
+function saveBackendUrl(sourceId = "backendUrlInput") {
+  const el = $(sourceId) || $("backendUrlInput") || $("backendUrlInputSidebar");
+  const url = String(el?.value || "").trim();
+  if (!url || !url.includes("script.google.com") || !url.includes("/exec")) {
+    showToast("Paste the Apps Script Web App URL ending with /exec", "error");
+    return;
+  }
+  CLOUD_API_URL = url;
+  localStorage.setItem("kcb_backend_url", url);
+  hydrateBackendUrlInputs();
+  showToast("Google Sheet connection URL saved");
+  testBackendConnection();
+}
+
+async function testBackendConnection() {
+  try {
+    startQuietSync("Testing Google Sheet connection...");
+    const health = await apiGet("health", { t: Date.now() });
+    if (health && health.ok) {
+      finishQuietSync("Connected to Google Sheet");
+      showToast("Google Sheet connected");
+      const help = $("backendStatusText");
+      if (help) help.innerHTML = "✅ Connected: " + escapeHTML(health.authVersion || "backend ok");
+      return true;
+    }
+    throw new Error(health?.error || "Backend health check failed");
+  } catch (err) {
+    finishQuietSync("Google Sheet not connected");
+    const msg = err.message || "Connection failed";
+    showToast(msg, "error");
+    const help = $("backendStatusText");
+    if (help) help.innerHTML = "❌ " + escapeHTML(msg);
+    return false;
+  }
+}
+
+function openBackendSettings() {
+  hydrateBackendUrlInputs();
+  const modal = $("backendSettingsModal");
+  if (modal) modal.classList.remove("hidden");
+}
+
+function closeBackendSettings() {
+  const modal = $("backendSettingsModal");
+  if (modal) modal.classList.add("hidden");
+}
+
+function showSyncHelp() {
+  const box = $("syncHelpBox");
+  if (box) box.classList.remove("hidden");
+}
+
 
 function toggleDarkMode() {
   document.body.classList.toggle("dark");
@@ -180,8 +241,8 @@ function apiGet(action, params = {}) {
     const timer = setTimeout(() => {
       if (done) return;
       cleanup();
-      reject(new Error("Backend did not respond. Re-deploy Apps Script and confirm app.js has the correct /exec URL."));
-    }, 15000);
+      reject(new Error("Backend did not respond. Check Apps Script /exec URL and deployment."));
+    }, 9000);
 
     window[cb] = data => {
       done = true;
@@ -515,9 +576,12 @@ async function fetchCloudData(showToastOnDone = true) {
     }
   }
 
-  finishQuietSync("Offline backup");
-  loadLocalBackup();
-  if (showToastOnDone) showToast("Could not sync Google Sheet. Showing this device backup.", "warn");
+  finishQuietSync("Google Sheet not connected");
+  loadLocalBackup(false);
+  if (showToastOnDone) {
+    showToast("Could not sync Google Sheet. Open Connection Setup and check the Apps Script /exec URL.", "error");
+  }
+  showSyncHelp();
 }
 
 function legacyJsonpGetData() {
@@ -564,13 +628,13 @@ function applyCloudData(data) {
   renderAll();
 }
 
-function loadLocalBackup() {
+function loadLocalBackup(showMessage = true) {
   try {
     const data = JSON.parse(localStorage.getItem("kcb_backup") || "{}");
     vehicles = data.vehicles || {};
     transactions = data.transactions || [];
     renderAll();
-    if (transactions.length || Object.keys(vehicles).length) showToast("Loaded local backup", "warn");
+    if (showMessage && (transactions.length || Object.keys(vehicles).length)) showToast("Loaded this device backup", "warn");
   } catch {}
 }
 
@@ -1121,6 +1185,7 @@ window.addEventListener("offline", () => showToast("Internet disconnected", "err
 window.addEventListener("load", () => {
   if (localStorage.getItem("kcb_dark") === "true") document.body.classList.add("dark");
   bindForms();
+  hydrateBackendUrlInputs();
   setEntryType("load");
   const loggedIn = restoreLogin();
   if (loggedIn) {
