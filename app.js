@@ -1,6 +1,8 @@
 const DEFAULT_CLOUD_API_URL = "https://script.google.com/macros/s/AKfycbyAJRWI2XiKLViz30C-VzaEPs2AX7cUJfOv1eiQcEphwiBB2GCX-y4j_4MiZbU2a0fC/exec";
-// v4.1: connection is built in. Ignore old/wrong URLs saved on desktop/mobile browsers.
-// If you create a brand-new Apps Script deployment, replace only the URL above once.
+const APP_VERSION = "4.2-forced-google-sheet";
+const FORCE_BACKEND_MODE = true;
+// v4.2: connection is built in and local/emergency sessions are cleared so mobile/desktop use the same Google Sheet backend.
+// If your Apps Script /exec deployment changed, replace only the URL above once in app.js.
 let CLOUD_API_URL = DEFAULT_CLOUD_API_URL;
 try { localStorage.removeItem("kcb_backend_url"); } catch {}
 
@@ -136,13 +138,13 @@ function saveBackendUrl() {
 
 async function testBackendConnection() {
   try {
-    startQuietSync("Testing built-in Google Sheet connection...");
+    startQuietSync("Testing Google Sheet connection...");
     const health = await apiGet("health", { t: Date.now() });
     if (health && health.ok) {
       finishQuietSync("Connected to Google Sheet");
-      showToast("Built-in Google Sheet connection working");
+      showToast("Google Sheet connection working");
       const help = $("backendStatusText");
-      if (help) help.innerHTML = "✅ Built-in connection active: " + escapeHTML(health.authVersion || "backend ok");
+      if (help) help.innerHTML = "✅ Google Sheet backend active: " + escapeHTML(health.authVersion || "backend ok");
       return true;
     }
     throw new Error(health?.error || "Backend health check failed");
@@ -204,6 +206,7 @@ function backendAuthParams() {
 }
 
 function localFallbackLogin(username, password) {
+  if (FORCE_BACKEND_MODE) return false;
   const key = String(username || "").trim().toLowerCase();
   const user = getLocalUsers()[key];
   if (!user || String(password || "") !== String(user.password || "")) return false;
@@ -314,9 +317,9 @@ function applyAccessControl() {
   const name = currentUser?.username || "Guest";
   const role = currentUser?.role || "-";
   if ($("topUserName")) $("topUserName").textContent = name;
-  if ($("topUserRole")) $("topUserRole").textContent = isLocalFallbackMode() ? role + " / local" : role;
+  if ($("topUserRole")) $("topUserRole").textContent = role;
   if ($("sidebarUserName")) $("sidebarUserName").textContent = name;
-  if ($("sidebarUserRole")) $("sidebarUserRole").textContent = isLocalFallbackMode() ? role + " / local" : role;
+  if ($("sidebarUserRole")) $("sidebarUserRole").textContent = role;
   if (isAdmin()) refreshUserList(false);
 }
 
@@ -366,15 +369,10 @@ async function loginUser(username, password) {
 
     hideLoading("Ready");
 
-    // Emergency fallback only when backend is unreachable.
-    // Users created on one device cannot be used on another in local mode.
-    if ((username === "admin" || username === "user") && localFallbackLogin(username, password)) {
-      showLoginHelp(`<b>Emergency local login active.</b><br>The Apps Script backend is not responding, so only default local login was allowed. Custom users/passwords require backend login. Re-deploy <code>Code.gs</code> and make sure <code>app.js</code> has the latest /exec URL.`);
-      return true;
-    }
-
-    showLoginHelp(`<b>Backend connection failed.</b><br>Custom desktop users/passwords work on mobile only after backend login works. Check Apps Script deployment and app.js URL.`);
-    showToast("Backend login failed", "error");
+    // v4.2: do not enter local mode. Local mode caused desktop/mobile data and passwords to differ.
+    showLoginHelp(`<b>Google Sheet backend is not connected.</b><br>Login is blocked until Apps Script is deployed correctly, so desktop and mobile stay on the same data.<br><br><b>Fix:</b> In the old Google Sheet open <code>Extensions → Apps Script</code>, paste the latest <code>Code.gs</code>, then <code>Deploy → Manage deployments → Edit → New version → Deploy</code> with access set to <code>Anyone</code>.`);
+    finishQuietSync("Google Sheet not connected");
+    showToast("Google Sheet backend not connected", "error");
     return false;
   } catch (err) {
     hideLoading("Login failed");
@@ -401,6 +399,13 @@ async function logoutUser(callBackend = true) {
 function restoreLogin() {
   try {
     const saved = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
+    // v4.2: clear old LOCAL sessions. They were the reason mobile and desktop did not share data/users.
+    if (saved?.authMode === "local" || String(saved?.token || "").startsWith("local-")) {
+      localStorage.removeItem(SESSION_KEY);
+      localStorage.removeItem("kcb_backup");
+      document.body.classList.add("auth-locked");
+      return false;
+    }
     if (saved?.username && saved?.role && saved?.token) {
       currentUser = saved;
       document.body.classList.remove("auth-locked");
@@ -575,9 +580,12 @@ async function fetchCloudData(showToastOnDone = true) {
   }
 
   finishQuietSync("Google Sheet not connected");
-  loadLocalBackup(false);
+  // v4.2: do not silently show this-device backup. That made mobile/desktop look different.
+  vehicles = {};
+  transactions = [];
+  renderAll();
   if (showToastOnDone) {
-    showToast("Could not sync Google Sheet. Please redeploy Apps Script as Web App: access = Anyone.", "error");
+    showToast("Could not sync Google Sheet. Redeploy Apps Script Web App with access = Anyone.", "error");
   }
   showSyncHelp();
 }
@@ -669,9 +677,8 @@ async function postToCloud(payload, options = {}) {
     if (refreshData) setTimeout(() => fetchCloudData(false), 2500);
   } catch (err) {
     console.warn("Google Sheet write failed", err);
-    if (!isLocalFallbackMode()) applyLocalWrite(payload);
-    finishQuietSync("Saved on this device only");
-    showToast("Google Sheet write failed. Saved on this device only. Check Apps Script deployment.", "error");
+    finishQuietSync("Google Sheet save failed");
+    showToast("Not saved. Google Sheet backend is not connected. Check Apps Script deployment.", "error");
   }
 }
 
@@ -1181,6 +1188,14 @@ function bindForms() {
 window.addEventListener("online", () => showToast("Internet connected"));
 window.addEventListener("offline", () => showToast("Internet disconnected", "error"));
 window.addEventListener("load", () => {
+  // Clear old emergency/local state from earlier packages.
+  try {
+    const oldSession = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
+    if (oldSession?.authMode === "local" || String(oldSession?.token || "").startsWith("local-")) {
+      localStorage.removeItem(SESSION_KEY);
+      localStorage.removeItem("kcb_backup");
+    }
+  } catch {}
   if (localStorage.getItem("kcb_dark") === "true") document.body.classList.add("dark");
   bindForms();
   hydrateBackendUrlInputs();

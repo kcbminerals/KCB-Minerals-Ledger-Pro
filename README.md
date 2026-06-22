@@ -1,48 +1,52 @@
-# KCB Minerals Ledger Pro v4.1 - Built-in Connection Fix
+# KCB Minerals Ledger Pro v4.2 - Forced Google Sheet Mode
 
-This version removes the repeated Connection Setup requirement.
+This version fixes the issue shown as **ADMIN / LOCAL**.
 
-## What changed
+## Important behavior
 
-- The Apps Script `/exec` connection is built into `app.js`.
-- Old wrong mobile/desktop saved backend URLs are ignored automatically.
-- Sync no longer asks for connection URL.
-- Sync error message now points to Apps Script deployment/access if the backend is unreachable.
-- Logo remains at `assets/logo.png`.
+- The app no longer restores old LOCAL sessions.
+- Mobile and desktop must both login through the same Google Apps Script backend.
+- The app no longer silently displays this-device backup when sync fails.
+- The KCB logo is embedded in `index.html`, so it will display even if `assets/logo.png` is not uploaded.
 
 ## Upload to GitHub
 
-Upload these files to the repository root:
+Upload/replace:
 
-- `index.html`
-- `style.css`
-- `app.js`
-- `README.md`
-- `assets/logo.png`
+- index.html
+- style.css
+- app.js
+- README.md
+- assets/logo.png
 
-## Apps Script setup
+## Google Apps Script setup
 
 Open your old Google Sheet, then:
 
-`Extensions → Apps Script`
+1. Extensions → Apps Script
+2. Replace all code with `Code.gs`
+3. Save
+4. Deploy → Manage deployments → Edit
+5. Version: New version
+6. Execute as: Me
+7. Who has access: Anyone
+8. Deploy
 
-Paste `Code.gs`, save, then redeploy:
+## Test
 
-`Deploy → Manage deployments → Edit → Version: New version → Deploy`
+Open your Apps Script `/exec` URL with:
 
-The Web App deployment must be:
+`?action=health`
 
-- Execute as: Me
-- Who has access: Anyone
+It should show:
 
-## Important
+`authVersion: 4.2-forced-google-sheet`
 
-The built-in URL inside `app.js` is:
+## Browser refresh
 
-`https://script.google.com/macros/s/AKfycbyAJRWI2XiKLViz30C-VzaEPs2AX7cUJfOv1eiQcEphwiBB2GCX-y4j_4MiZbU2a0fC/exec`
+After GitHub upload:
 
-If you create a completely new deployment with a different `/exec` URL, replace only this one line in `app.js`:
+- Desktop: Ctrl + Shift + R
+- Mobile: clear site data or open in Incognito once
 
-`const DEFAULT_CLOUD_API_URL = ".../exec";`
-
-Then upload `app.js` again.
+Then login with backend users.
