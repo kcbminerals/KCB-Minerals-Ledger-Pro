@@ -1,7 +1,7 @@
-const DEFAULT_CLOUD_API_URL = "https://script.google.com/macros/s/AKfycbyAJRWI2XiKLViz30C-VzaEPs2AX7cUJfOv1eiQcEphwiBB2GCX-y4j_4MiZbU2a0fC/exec";
-const APP_VERSION = "4.2-forced-google-sheet";
+const DEFAULT_CLOUD_API_URL = "https://script.google.com/macros/s/AKfycbwcS5WFDUrpUFIS69BzjPunpwoiap2_LYfXFfB4y0bR9QWt13-XiBJOazT1vT1nU66V/exec";
+const APP_VERSION = "4.3-simple-login";
 const FORCE_BACKEND_MODE = true;
-// v4.2: connection is built in and local/emergency sessions are cleared so mobile/desktop use the same Google Sheet backend.
+// v4.3: simple username-only login. No password is required; mobile and desktop use the same Google Sheet backend.
 // If your Apps Script /exec deployment changed, replace only the URL above once in app.js.
 let CLOUD_API_URL = DEFAULT_CLOUD_API_URL;
 try { localStorage.removeItem("kcb_backend_url"); } catch {}
@@ -18,8 +18,8 @@ let currentUser = null;
 const SESSION_KEY = "kcb_current_user";
 const LOCAL_USERS_KEY = "kcb_local_users_v2";
 const DEFAULT_LOCAL_USERS = {
-  admin: { password: "admin123", role: "admin" },
-  user: { password: "user123", role: "user" }
+  admin: { role: "admin" },
+  user: { role: "user" }
 };
 
 function getLocalUsers() {
@@ -205,15 +205,15 @@ function backendAuthParams() {
   return isLocalFallbackMode() ? {} : { token: requireSession() };
 }
 
-function localFallbackLogin(username, password) {
+function localFallbackLogin(username) {
   if (FORCE_BACKEND_MODE) return false;
-  const key = String(username || "").trim().toLowerCase();
-  const user = getLocalUsers()[key];
-  if (!user || String(password || "") !== String(user.password || "")) return false;
+  const key = String(username || "").trim().toLowerCase() || "user";
+  const saved = getLocalUsers()[key];
+  const role = key === "admin" ? "admin" : (saved?.role === "admin" ? "admin" : "user");
 
   currentUser = {
     username: key,
-    role: user.role === "admin" ? "admin" : "user",
+    role,
     token: "local-" + Date.now(),
     authMode: "local"
   };
@@ -226,9 +226,6 @@ function localFallbackLogin(username, password) {
   switchTab(isAdmin() ? "dashboard" : "logentry");
   fetchCloudData(false);
   showToast("Logged in");
-  if (String(password) === "admin123" || String(password) === "user123") {
-    setTimeout(() => showToast("Please change the default password", "warn"), 800);
-  }
   return true;
 }
 
@@ -323,19 +320,19 @@ function applyAccessControl() {
   if (isAdmin()) refreshUserList(false);
 }
 
-async function loginUser(username, password) {
+async function loginUser(username) {
   username = String(username || "").trim().toLowerCase();
-  password = String(password || "");
+  if (!username) return showToast("Enter username", "error");
 
   try {
     showLoginHelp("");
-    showLoading("Checking login...");
+    showLoading("Opening ledger...");
 
-    // First try the secure Google Apps Script backend login.
     try {
       const health = await checkBackendHealth();
       if (health && health.ok && String(health.storage || "").toLowerCase().includes("sheet")) {
-        const data = await apiGet("login", { username, password });
+        // v4.3: username-only login. Backend creates/uses a session without checking any password.
+        const data = await apiGet("login", { username });
         hideLoading("Ready");
 
         if (data && data.ok) {
@@ -357,20 +354,17 @@ async function loginUser(username, password) {
           return true;
         }
 
-        // Backend is active, so do NOT use local fallback for wrong credentials.
-        // This keeps desktop and mobile using the same backend users/passwords.
-        showLoginHelp(`<b>${escapeHTML(data.error || "Invalid username or password")}</b><br><br>This device is connected to the Google Sheet backend. Use the backend username/password. If needed, reset users from Apps Script using <code>?action=resetDefaultUsers&setupKey=KCB-RESET-2026</code>.`);
-        showToast(data.error || "Invalid username or password", "error");
+        showLoginHelp(`<b>${escapeHTML(data.error || "Unable to login")}</b><br><br>No password is required. Enter <code>admin</code> for full access or any staff name for entry access.`);
+        showToast(data.error || "Unable to login", "error");
         return false;
       }
     } catch (backendErr) {
-      console.warn("Backend login unavailable, trying local fallback", backendErr);
+      console.warn("Backend login unavailable", backendErr);
     }
 
     hideLoading("Ready");
 
-    // v4.2: do not enter local mode. Local mode caused desktop/mobile data and passwords to differ.
-    showLoginHelp(`<b>Google Sheet backend is not connected.</b><br>Login is blocked until Apps Script is deployed correctly, so desktop and mobile stay on the same data.<br><br><b>Fix:</b> In the old Google Sheet open <code>Extensions → Apps Script</code>, paste the latest <code>Code.gs</code>, then <code>Deploy → Manage deployments → Edit → New version → Deploy</code> with access set to <code>Anyone</code>.`);
+    showLoginHelp(`<b>Google Sheet backend is not connected.</b><br>No-password login needs the Apps Script backend to create a shared session.<br><br><b>Fix:</b> In your old Google Sheet open <code>Extensions → Apps Script</code>, paste the latest <code>Code.gs</code>, then <code>Deploy → Manage deployments → Edit → New version → Deploy</code> with access set to <code>Anyone</code>.`);
     finishQuietSync("Google Sheet not connected");
     showToast("Google Sheet backend not connected", "error");
     return false;
@@ -392,7 +386,6 @@ async function logoutUser(callBackend = true) {
   localStorage.removeItem(SESSION_KEY);
   document.body.classList.add("auth-locked");
   document.body.classList.remove("role-admin", "role-user");
-  if ($("loginPassword")) $("loginPassword").value = "";
   showToast("Logged out");
 }
 
@@ -454,13 +447,12 @@ function renderUserManager() {
 function saveUserAccount() {
   if (!isAdmin()) return showToast("Only admin can manage users", "error");
   const username = $("userUsername").value.trim().toLowerCase();
-  const password = $("userPassword").value.trim();
   const role = $("userRole").value === "admin" ? "admin" : "user";
-  if (!username || !password) return showToast("Enter username and password", "error");
+  if (!username) return showToast("Enter username", "error");
 
   if (isLocalFallbackMode()) {
     const users = getLocalUsers();
-    users[username] = { password, role };
+    users[username] = { role };
     saveLocalUsers(users);
     $("userForm").reset();
     refreshUserList(true);
@@ -468,7 +460,7 @@ function saveUserAccount() {
     return;
   }
 
-  postToCloud({ action: "saveUser", username, password, role }, { refreshData: false, successMessage: "User saved" });
+  postToCloud({ action: "saveUser", username, role }, { refreshData: false, successMessage: "User saved" });
   $("userForm").reset();
   setTimeout(() => refreshUserList(true), 1200);
 }
@@ -510,27 +502,7 @@ function resetDefaultUsers() {
 }
 
 function changeCurrentPassword() {
-  if (!currentUser) return;
-  const currentPassword = $("currentPassword")?.value || "";
-  const newPassword = $("newPassword")?.value || "";
-  const confirmPassword = $("confirmPassword")?.value || "";
-
-  if (!newPassword || newPassword.length < 4) return showToast("New password must be at least 4 characters", "error");
-  if (newPassword !== confirmPassword) return showToast("New password and confirmation do not match", "error");
-
-  if (isLocalFallbackMode()) {
-    const users = getLocalUsers();
-    const u = users[currentUser.username];
-    if (!u) return showToast("Current user not found", "error");
-    if (String(u.password || "") !== String(currentPassword || "")) return showToast("Current password is incorrect", "error");
-    u.password = newPassword;
-    saveLocalUsers(users);
-    closeChangePassword();
-    showToast("Password changed");
-    return;
-  }
-
-  postToCloud({ action: "changePassword", currentPassword, newPassword }, { refreshData: false, successMessage: "Password change sent" });
+  showToast("Password system has been removed. Login is username-only.", "warn");
   closeChangePassword();
 }
 
@@ -1142,7 +1114,7 @@ async function exportPDF() {
 function bindForms() {
   $("loginForm")?.addEventListener("submit", e => {
     e.preventDefault();
-    loginUser($("loginUsername").value.trim(), $("loginPassword").value);
+    loginUser($("loginUsername").value.trim());
   });
 
   $("userForm")?.addEventListener("submit", e => {
