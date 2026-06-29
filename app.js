@@ -1,5 +1,5 @@
 const DEFAULT_CLOUD_API_URL = "https://script.google.com/macros/s/AKfycbwA5eKoBNAbaKix_-cpHoLrfBxwnZzYfnBreUkZRIRjZV6UjLXUq8HA44R_grfd6-qC/exec"; // v6.5: forced working Apps Script /exec URL.
-const APP_VERSION = "6.5-force-url-final";
+const APP_VERSION = "6.6-stable-jsonp-final";
 const FORCE_BACKEND_MODE = false; // GitHub version: username-only login; Sheet sync via hidden Apps Script bridge.
 // v5.1: adds in-app Google Sheet connection setup, remembers the Apps Script URL, and uploads pending saves after connection.
 // Login remains username-only. Google Sheet is the shared source of truth when Apps Script is correctly deployed.
@@ -523,32 +523,38 @@ function bridgeCall(action, params = {}, timeoutMs = 30000) {
 function apiGetJsonp(action, params = {}) {
   const forcedUrl = ensureCloudUrl();
   return new Promise((resolve, reject) => {
-    const cb = "kcb_api_" + Date.now() + "_" + Math.floor(Math.random() * 100000);
+    // v6.6: use one stable JSONP callback name. Some browsers/proxies were failing on many dynamic callback names.
+    const rid = "r" + Date.now() + "_" + Math.floor(Math.random() * 100000);
+    const cb = "kcbJsonpCallback";
     const script = document.createElement("script");
-    const query = new URLSearchParams({ action, callback: cb, ...params });
+    const query = new URLSearchParams({ action, callback: cb, rid, ...params });
     let done = false;
 
-    const timer = setTimeout(() => {
-      if (done) return;
-      cleanup();
-      reject(new Error("Apps Script did not respond. Check deployment access = Anyone and redeploy new version."));
-    }, 15000);
-
-    window[cb] = data => {
+    window.__kcbJsonpPending = window.__kcbJsonpPending || {};
+    window.__kcbJsonpPending[rid] = { resolve, reject };
+    window.kcbJsonpCallback = function(data) {
       done = true;
       cleanup();
       resolve(data || {});
     };
 
+    const timer = setTimeout(() => {
+      if (done) return;
+      cleanup();
+      reject(new Error("Apps Script did not respond. Verify the exact /exec URL in a normal tab and redeploy Apps Script as Anyone."));
+    }, 20000);
+
     script.onerror = () => {
       if (done) return;
       cleanup();
-      reject(new Error("Apps Script connection failed. Open /exec?action=health once and confirm ok:true."));
+      const fullUrl = forcedUrl + (forcedUrl.includes("?") ? "&" : "?") + query.toString();
+      console.error("KCB JSONP failed URL:", fullUrl);
+      reject(new Error("Apps Script JSONP request returned 404/blocked. Copy the failed URL from console and open it directly."));
     };
 
     function cleanup() {
       clearTimeout(timer);
-      try { delete window[cb]; } catch {}
+      try { delete window.__kcbJsonpPending[rid]; } catch {}
       script.remove();
     }
 
