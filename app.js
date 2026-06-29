@@ -1,5 +1,5 @@
-const DEFAULT_CLOUD_API_URL = "https://script.google.com/macros/library/d/1sspPAEoTO1pQN3yj9NQjNAjInxV-yj2FPZPiRHvWNGjBc46VZVyHnjUX/15"; // v6.3: verified working Apps Script backend URL. Do not replace unless you deploy a new web app.
-const APP_VERSION = "6.3-correct-apps-script-url";
+const DEFAULT_CLOUD_API_URL = "https://script.google.com/macros/s/AKfycbwA5eKoBNAbaKix_-cpHoLrfBxwnZzYfnBreUkZRIRjZV6UjLXUq8HA44R_grfd6-qC/exec"; // v6.3: verified working Apps Script backend URL. Do not replace unless you deploy a new web app.
+const APP_VERSION = "6.4-force-correct-sheet-url";
 const FORCE_BACKEND_MODE = false; // GitHub version: username-only login; Sheet sync via hidden Apps Script bridge.
 // v5.1: adds in-app Google Sheet connection setup, remembers the Apps Script URL, and uploads pending saves after connection.
 // Login remains username-only. Google Sheet is the shared source of truth when Apps Script is correctly deployed.
@@ -33,6 +33,25 @@ let CLOUD_API_URL = (() => {
     console.warn("Force cloud URL setup failed", err);
   }
 })();
+
+// v6.4 final fix: never allow the GitHub app to run without the verified Apps Script URL.
+// This preserves pending browser entries and makes Sync use the correct /exec endpoint.
+function ensureCloudUrl() {
+  const verifiedUrl = String(DEFAULT_CLOUD_API_URL || "").trim();
+  const validExecUrl = value => /^https:\/\/script\.google\.com\/macros\/s\/.+\/exec(?:[?#].*)?$/.test(String(value || "").trim());
+  if (!validExecUrl(String(CLOUD_API_URL || "").trim()) && validExecUrl(verifiedUrl)) {
+    CLOUD_API_URL = verifiedUrl;
+  }
+  try {
+    if (validExecUrl(verifiedUrl)) {
+      ["kcb_backend_url", "kcb_backend_url_v51", "kcb_backend_url_v52", "kcb_backend_url_v53", "kcb_backend_url_v54"].forEach(k => localStorage.setItem(k, verifiedUrl));
+    }
+  } catch (err) {
+    console.warn("Unable to save verified Apps Script URL", err);
+  }
+  return CLOUD_API_URL;
+}
+ensureCloudUrl();
 
 window.kcbForceCloudFix = function(){
   try {
@@ -260,6 +279,7 @@ function finishQuietSync(message = "Connected") {
 }
 
 function hasBackendUrl() {
+  ensureCloudUrl();
   const url = String(CLOUD_API_URL || "").trim();
   return /^https:\/\/script\.google\.com\/macros\/s\/.+\/exec(?:[?#].*)?$/.test(url);
 }
@@ -309,11 +329,11 @@ async function saveBackendUrl() {
 
 function clearBackendUrl() {
   CLOUD_API_URL = DEFAULT_CLOUD_API_URL || "";
-  try { localStorage.removeItem(BACKEND_URL_KEY); } catch {}
+  ensureCloudUrl();
   lastCloudReadOk = false;
   hydrateBackendUrlInputs();
-  updateSyncMeta("Sheet URL missing");
-  showToast("Google Sheet URL cleared", "warn");
+  updateSyncMeta("Sheet URL restored");
+  showToast("Verified Google Sheet URL restored", "info");
 }
 
 async function uploadPendingNow() {
@@ -510,6 +530,7 @@ function bridgeCall(action, params = {}, timeoutMs = 30000) {
 }
 
 function apiGetJsonp(action, params = {}) {
+  ensureCloudUrl();
   return new Promise((resolve, reject) => {
     if (!hasBackendUrl()) {
       reject(new Error("Google Sheet URL is not set. Paste your Apps Script /exec URL in Connect Sheet."));
