@@ -1,5 +1,5 @@
-/* KCB Minerals Ledger Fresh v7.0
-   GitHub-safe version: no Tailwind CDN, no service worker cache, fixed Apps Script URL, JSONP sync. */
+/* KCB Minerals Ledger Fresh v7.1 Fixed Callback
+   GitHub-safe version: no Tailwind CDN, no service worker cache, fixed Apps Script URL, fixed-callback JSONP sync. */
 
 const CLOUD_URL = "https://script.google.com/macros/s/AKfycbwA5eKoBNAbaKix_-cpHoLrfBxwnZzYfnBreUkZRIRjZV6UjLXUq8HA44R_grfd6-qC/exec";
 const STORE_KEY = "kcb_fresh_v7_store";
@@ -68,38 +68,55 @@ function updateStatusOnly(){
   if (sub) sub.textContent = state.cloud === "ok" ? `Connected • Last sync ${state.lastSync}` : state.cloudMessage;
 }
 
+let jsonpChain = Promise.resolve();
+
 function jsonp(action, payload = {}, timeoutMs = 25000){
-  return new Promise((resolve, reject) => {
-    if (!CLOUD_URL || !CLOUD_URL.includes("/exec")) {
-      reject(new Error("Apps Script /exec URL missing in app.js"));
+  // Use a fixed callback name because your manual test with callback=test works.
+  // Requests are queued one by one so the fixed callback cannot clash.
+  const run = () => new Promise((resolve, reject) => {
+    if (!CLOUD_URL || !CLOUD_URL.includes('/exec')) {
+      reject(new Error('Apps Script /exec URL missing in app.js'));
       return;
     }
-    const cb = "kcb_v7_" + Date.now() + "_" + Math.floor(Math.random() * 1000000);
+
+    const cb = 'test';
     const params = new URLSearchParams();
-    params.set("action", action);
-    params.set("callback", cb);
-    params.set("t", Date.now().toString());
-    if (payload && Object.keys(payload).length) params.set("payload", JSON.stringify(payload));
-    const url = CLOUD_URL + "?" + params.toString();
-    const script = document.createElement("script");
+    params.set('action', action);
+    params.set('callback', cb);
+    params.set('t', Date.now().toString());
+    if (payload && Object.keys(payload).length) params.set('payload', JSON.stringify(payload));
+
+    const url = CLOUD_URL + '?' + params.toString();
+    const script = document.createElement('script');
     let done = false;
-    const timer = setTimeout(() => cleanup(new Error("Apps Script request timed out. URL tested: " + url)), timeoutMs);
+    const oldCallback = window[cb];
+    const timer = setTimeout(() => cleanup(new Error('Apps Script request timed out. Test this URL in Incognito: ' + url)), timeoutMs);
+
     function cleanup(err, data){
       if (done) return;
       done = true;
       clearTimeout(timer);
-      try { delete window[cb]; } catch { window[cb] = undefined; }
       script.remove();
+      try {
+        if (oldCallback === undefined) delete window[cb];
+        else window[cb] = oldCallback;
+      } catch { window[cb] = oldCallback; }
       if (err) reject(err); else resolve(data);
     }
+
     window[cb] = (data) => {
-      if (!data || data.ok === false) cleanup(new Error((data && data.error) || "Apps Script returned error"), data);
+      if (!data || data.ok === false) cleanup(new Error((data && data.error) || 'Apps Script returned error'), data);
       else cleanup(null, data);
     };
-    script.onerror = () => cleanup(new Error("Apps Script connection failed. Open this URL in incognito and it must show data: " + url));
+
+    script.onerror = () => cleanup(new Error('Apps Script connection failed. Open this exact URL in Incognito. It must show test({...}): ' + url));
     script.src = url;
     document.head.appendChild(script);
   });
+
+  const task = jsonpChain.then(run, run);
+  jsonpChain = task.catch(() => {});
+  return task;
 }
 
 async function loadCloud(){
