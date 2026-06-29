@@ -1,4 +1,4 @@
-const DEFAULT_CLOUD_API_URL = "https://script.google.com/macros/s/AKfycbwA5eKoBNAbaKix_-cpHoLrfBxwnZzYfnBreUkZRIRjZV6UjLXUq8HA44R_grfd6-qC/exec"; // v5.3: force-connected to the verified KCB Apps Script backend.
+const DEFAULT_CLOUD_API_URL = "https://script.google.com/macros/s/AKfycbznvcl-NbWSR_kLhQnvWVphvDicMvunMRCBqU8W0rx8uVlZIX1twtjXGVxcjYBtCiCv/exec"; // v5.3: force-connected to the verified KCB Apps Script backend.
 const APP_VERSION = "6.2-github-jsonp-only-working";
 const FORCE_BACKEND_MODE = false; // GitHub version: username-only login; Sheet sync via hidden Apps Script bridge.
 // v5.1: adds in-app Google Sheet connection setup, remembers the Apps Script URL, and uploads pending saves after connection.
