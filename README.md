@@ -1,14 +1,6 @@
-# KCB Minerals Ledger Pro v6.3 Correct URL Fix
+KCB Minerals Ledger Pro v6.4 - Force Correct Sheet URL
 
-This GitHub Pages version uses the verified working Apps Script URL:
+This GitHub Pages version hardcodes and restores the verified Apps Script /exec URL so pending writes do not stop with "Google Sheet URL is not set".
 
-https://script.google.com/macros/s/AKfycbwA5eKoBNAbaKix_-cpHoLrfBxwnZzYfnBreUkZRIRjZV6UjLXUq8HA44R_grfd6-qC/exec
-
-Upload these files to the active GitHub repository/site path currently being opened in the browser:
-- index.html
-- app.js
-- style.css
-- service-worker.js
-- manifest.json
-
-Do not clear site data before syncing pending entries.
+Upload/replace index.html, app.js, style.css, service-worker.js, manifest.json in the KCB-Minerals-Ledger-Pro GitHub repository.
+Open https://kcbminerals.github.io/KCB-Minerals-Ledger-Pro/?v=6.4 and press Ctrl+Shift+R, then Sync Sheet.
