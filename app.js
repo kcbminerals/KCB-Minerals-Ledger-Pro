@@ -1,5 +1,5 @@
 const DEFAULT_CLOUD_API_URL = "https://script.google.com/macros/s/AKfycbwA5eKoBNAbaKix_-cpHoLrfBxwnZzYfnBreUkZRIRjZV6UjLXUq8HA44R_grfd6-qC/exec"; // v5.3: force-connected to the verified KCB Apps Script backend.
-const APP_VERSION = "6.1-github-bridge-working";
+const APP_VERSION = "6.2-github-jsonp-only-working";
 const FORCE_BACKEND_MODE = false; // GitHub version: username-only login; Sheet sync via hidden Apps Script bridge.
 // v5.1: adds in-app Google Sheet connection setup, remembers the Apps Script URL, and uploads pending saves after connection.
 // Login remains username-only. Google Sheet is the shared source of truth when Apps Script is correctly deployed.
@@ -433,7 +433,7 @@ function localFallbackLogin(username) {
   return true;
 }
 
-// v6.1 GitHub bridge: avoids fetch/CORS and avoids URL-length problems.
+// v6.2 GitHub JSONP bridge: avoids fetch/CORS, iframe blocks and service-worker cache issues.
 // GitHub page stays as the app. A hidden Apps Script iframe performs Sheet work using google.script.run.
 let kcbBridgeFrame = null;
 let kcbBridgeReady = false;
@@ -443,7 +443,7 @@ const kcbBridgePending = new Map();
 function getBridgeUrl() {
   if (!hasBackendUrl()) return "";
   const sep = CLOUD_API_URL.includes("?") ? "&" : "?";
-  return CLOUD_API_URL + sep + "mode=bridge&v=6.1&parentOrigin=" + encodeURIComponent(location.origin || "*");
+  return CLOUD_API_URL + sep + "mode=bridge&v=6.2&parentOrigin=" + encodeURIComponent(location.origin || "*");
 }
 
 function ensureBridgeFrame() {
@@ -466,7 +466,7 @@ function ensureBridgeFrame() {
 
     const timer = setTimeout(() => {
       kcbBridgeLoading = null;
-      reject(new Error("Google Sheet bridge did not load. Redeploy Code.gs v6.1 as Web App: Execute as Me, Access Anyone."));
+      reject(new Error("Google Sheet bridge did not load. Redeploy Code.gs v6.2 as Web App: Execute as Me, Access Anyone."));
     }, 18000);
 
     function onMessage(event) {
@@ -523,7 +523,7 @@ function apiGetJsonp(action, params = {}) {
     const timer = setTimeout(() => {
       if (done) return;
       cleanup();
-      reject(new Error("Backend JSONP did not respond."));
+      reject(new Error("Apps Script did not respond. Check deployment access = Anyone and redeploy new version."));
     }, 15000);
 
     window[cb] = data => {
@@ -535,7 +535,7 @@ function apiGetJsonp(action, params = {}) {
     script.onerror = () => {
       if (done) return;
       cleanup();
-      reject(new Error("Cloud script did not return JSONP."));
+      reject(new Error("Apps Script connection failed. Open /exec?action=health once and confirm ok:true."));
     };
 
     function cleanup() {
@@ -550,21 +550,19 @@ function apiGetJsonp(action, params = {}) {
 }
 
 function apiGet(action, params = {}) {
-  // Bridge is primary. JSONP remains as fallback for older deployments.
-  return bridgeCall(action, params).catch(err => {
-    console.warn("Bridge call failed, trying JSONP fallback:", action, err);
-    return apiGetJsonp(action, params);
-  });
+  // v6.2: Use JSONP only. This is the most reliable method for GitHub Pages -> Apps Script.
+  // The old iframe/google.script.run bridge could stay stuck in Chrome/PWA mode.
+  return apiGetJsonp(action, params);
 }
 
 window.kcbTestCloudBridge = async function() {
   try {
-    const health = await bridgeCall("health", { t: Date.now() }, 20000);
-    console.log("KCB bridge health", health);
-    alert("Bridge working: " + (health.spreadsheetUrl || health.storage || "Google Sheet connected"));
+    const health = await apiGetJsonp("health", { t: Date.now() });
+    console.log("KCB JSONP health", health);
+    alert("Google Sheet connected: " + (health.spreadsheetUrl || health.storage || "OK"));
   } catch (err) {
     console.error(err);
-    alert("Bridge failed: " + (err.message || err));
+    alert("Google Sheet connection failed: " + (err.message || err));
   }
 };
 

@@ -1,35 +1,13 @@
-KCB Minerals Ledger Pro v6.1 - GitHub Bridge Working
+# KCB Minerals Ledger Pro v6.2 - GitHub JSONP Working Fix
 
-This version keeps the app on GitHub Pages, but uses a hidden Apps Script iframe bridge for Google Sheet sync.
-It avoids browser CORS, Apps Script redirect and service-worker cache problems.
+This version keeps the app on GitHub Pages and connects to Google Apps Script using JSONP-only calls.
+It removes the iframe/google.script.run bridge from the active path because that can remain stuck in Chrome/PWA mode.
 
-Files for GitHub:
-- index.html
-- app.js
-- style.css
-- service-worker.js
-- manifest.json
-- keep your existing assets/logo.png on GitHub
+Upload to GitHub: index.html, app.js, style.css, service-worker.js, manifest.json.
+Update Apps Script: Code.gs, then deploy a new Web App version as Execute as Me / Anyone.
 
-File for Google Apps Script:
-- Code.gs
+Apps Script URL already set in app.js:
+https://script.google.com/macros/s/AKfycbwA5eKoBNAbaKix_-cpHoLrfBxwnZzYfnBreUkZRIRjZV6UjLXUq8HA44R_grfd6-qC/exec
 
-Apps Script deployment:
-1. Open your Google Sheet.
-2. Extensions -> Apps Script.
-3. Replace Code.gs with the provided Code.gs.
-4. Save.
-5. Deploy -> Manage deployments -> Edit -> New version -> Deploy.
-6. Execute as: Me.
-7. Who has access: Anyone.
-8. Use the same /exec URL already inside app.js.
-
-GitHub deployment:
-1. Upload/replace index.html, app.js, style.css, service-worker.js, manifest.json.
-2. Commit changes.
-3. Open https://kcbminerals.github.io/KCB-Minerals-Ledger/?v=6.1
-4. Hard refresh with Ctrl+Shift+R.
-5. Login admin and press Sync.
-
-Debug:
-Open browser console and run: kcbTestCloudBridge()
+Sheet ID already set in Code.gs:
+1nh2x0t1fnL7cKJkGV-APORVzrJD2BBYzEAu4SrbXXzY
