@@ -1,10 +1,49 @@
-const DEFAULT_CLOUD_API_URL = "https://script.google.com/macros/s/AKfycbwcS5WFDUrpUFIS69BzjPunpwoiap2_LYfXFfB4y0bR9QWt13-XiBJOazT1vT1nU66V/exec";
-const APP_VERSION = "4.3-simple-login";
-const FORCE_BACKEND_MODE = true;
-// v4.3: simple username-only login. No password is required; mobile and desktop use the same Google Sheet backend.
-// If your Apps Script /exec deployment changed, replace only the URL above once in app.js.
-let CLOUD_API_URL = DEFAULT_CLOUD_API_URL;
-try { localStorage.removeItem("kcb_backend_url"); } catch {}
+const DEFAULT_CLOUD_API_URL = "https://script.google.com/macros/s/AKfycbwA5eKoBNAbaKix_-cpHoLrfBxwnZzYfnBreUkZRIRjZV6UjLXUq8HA44R_grfd6-qC/exec"; // v5.3: force-connected to the verified KCB Apps Script backend.
+const APP_VERSION = "6.1-github-bridge-working";
+const FORCE_BACKEND_MODE = false; // GitHub version: username-only login; Sheet sync via hidden Apps Script bridge.
+// v5.1: adds in-app Google Sheet connection setup, remembers the Apps Script URL, and uploads pending saves after connection.
+// Login remains username-only. Google Sheet is the shared source of truth when Apps Script is correctly deployed.
+const BACKEND_URL_KEY = "kcb_backend_url_v54";
+let CLOUD_API_URL = (() => {
+  const validExecUrl = value => /^https:\/\/script\.google\.com\/macros\/s\/.+\/exec(?:[?#].*)?$/.test(String(value || "").trim());
+  try {
+    const saved = String(localStorage.getItem(BACKEND_URL_KEY) || "").trim();
+    const url = validExecUrl(saved) ? saved : String(DEFAULT_CLOUD_API_URL || "").trim();
+    if (validExecUrl(url)) localStorage.setItem(BACKEND_URL_KEY, url);
+    return url;
+  } catch {
+    return DEFAULT_CLOUD_API_URL || "";
+  }
+})();
+
+
+// v5.3 emergency fix: force the verified backend URL and remove old local-only login sessions.
+// Pending writes remain safe in kcb_pending_writes_v5 and will upload after the user logs in again.
+(function forceVerifiedCloudUrl(){
+  try {
+    const verifiedUrl = DEFAULT_CLOUD_API_URL;
+    ["kcb_backend_url", "kcb_backend_url_v51", "kcb_backend_url_v52", "kcb_backend_url_v53", "kcb_backend_url_v54"].forEach(k => localStorage.setItem(k, verifiedUrl));
+    CLOUD_API_URL = verifiedUrl;
+    const savedSession = JSON.parse(localStorage.getItem("kcb_current_user") || "null");
+    if (savedSession && savedSession.authMode === "old-local-disabled") {
+      localStorage.removeItem("kcb_current_user");
+      window.KCB_FORCE_RELOGIN = true;
+    }
+  } catch (err) {
+    console.warn("Force cloud URL setup failed", err);
+  }
+})();
+
+window.kcbForceCloudFix = function(){
+  try {
+    const verifiedUrl = DEFAULT_CLOUD_API_URL;
+    ["kcb_backend_url", "kcb_backend_url_v51", "kcb_backend_url_v52", "kcb_backend_url_v53", "kcb_backend_url_v54"].forEach(k => localStorage.setItem(k, verifiedUrl));
+    localStorage.removeItem("kcb_current_user");
+    if (navigator.serviceWorker) navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
+    alert("Cloud URL fixed. Login again with admin, then press Sync. v5.4 does not require backend login token.");
+    location.reload(true);
+  } catch (err) { alert(err.message || err); }
+};
 
 let vehicles = {};
 let transactions = [];
@@ -14,13 +53,21 @@ let activeTab = "dashboard";
 let revenueChart = null;
 let paymentChart = null;
 let currentUser = null;
+let lastCloudReadOk = false;
+let lastSyncAt = 0;
+let deferredInstallPrompt = null;
 
 const SESSION_KEY = "kcb_current_user";
 const LOCAL_USERS_KEY = "kcb_local_users_v2";
+const PENDING_WRITES_KEY = "kcb_pending_writes_v5";
+const BACKUP_KEY = "kcb_backup";
 const DEFAULT_LOCAL_USERS = {
   admin: { role: "admin" },
   user: { role: "user" }
 };
+
+// v5.2: make diagnostics visible in the browser console for quick support.
+window.KCB_LEDGER_INFO = { appVersion: APP_VERSION, backendUrl: CLOUD_API_URL };
 
 function getLocalUsers() {
   try {
@@ -33,6 +80,97 @@ function getLocalUsers() {
 
 function saveLocalUsers(users) {
   localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(users || DEFAULT_LOCAL_USERS));
+}
+
+function generateId(prefix = "tx") {
+  const random = (window.crypto && crypto.getRandomValues)
+    ? Array.from(crypto.getRandomValues(new Uint32Array(2))).map(n => n.toString(36)).join("")
+    : Math.random().toString(36).slice(2, 12);
+  return `${prefix}_${Date.now()}_${random}`;
+}
+
+function quoteArg(value) {
+  return JSON.stringify(String(value ?? ""));
+}
+
+function getPendingWrites() {
+  try {
+    const list = JSON.parse(localStorage.getItem(PENDING_WRITES_KEY) || "[]");
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePendingWrites(list) {
+  localStorage.setItem(PENDING_WRITES_KEY, JSON.stringify(Array.isArray(list) ? list : []));
+  updateSyncMeta();
+}
+
+function queuePendingWrite(payload, reason = "pending") {
+  const list = getPendingWrites();
+  const action = String(payload?.action || "");
+  const target = action === "saveVehicle" ? String(payload.vehicle || "") : action === "deleteTx" ? String(payload.id || "") : String(payload?.tx?.id || "");
+  const existingIndex = list.findIndex(item => String(item.action) === action && String(item.target) === target && target);
+  const item = { id: generateId("pending"), action, target, payload, reason, attempts: 0, queuedAt: Date.now() };
+  if (existingIndex >= 0) list[existingIndex] = item;
+  else list.push(item);
+  savePendingWrites(list);
+  return item;
+}
+
+function removePendingWrite(pendingId) {
+  savePendingWrites(getPendingWrites().filter(item => item.id !== pendingId));
+}
+
+function reapplyPendingWritesToView() {
+  getPendingWrites().forEach(item => applyLocalWrite(item.payload, { silent: true }));
+}
+
+function updateSyncMeta(statusText = "") {
+  const pending = getPendingWrites().length;
+  const lastText = lastSyncAt ? cleanFormatDate(lastSyncAt) : "Not synced";
+  const hasUrl = hasBackendUrl();
+  const status = statusText || (lastCloudReadOk ? "Connected" : (hasUrl ? "Connecting to Sheet" : "Sheet URL missing"));
+  if ($("lastSyncText")) $("lastSyncText").textContent = lastSyncAt ? `Last sync: ${lastText}` : "Not synced yet";
+  if ($("sideSyncMeta")) $("sideSyncMeta").textContent = `${pending} pending • ${lastCloudReadOk ? "Synced" : (hasUrl ? "Press Sync" : "Connect Sheet")}`;
+  if ($("highPendingWrites")) $("highPendingWrites").textContent = pending;
+  if ($("highLastSync")) $("highLastSync").textContent = lastText;
+  if ($("highCloudStatus")) $("highCloudStatus").textContent = status;
+  if ($("backendStatusText")) $("backendStatusText").textContent = lastCloudReadOk ? "Connected to Google Sheet" : (hasUrl ? "URL saved. Test connection / upload pending." : "Paste Apps Script /exec URL to upload pending data.");
+  if ($("pendingUploadCount")) $("pendingUploadCount").textContent = pending;
+}
+
+async function flushPendingWrites(showToastOnDone = false) {
+  if (!currentUser) return;
+  const pending = getPendingWrites();
+  if (!pending.length) { updateSyncMeta(); return; }
+  startQuietSync(`Uploading ${pending.length} pending save(s)...`);
+  let uploaded = 0;
+  for (const item of pending) {
+    try {
+      const securedPayload = { ...item.payload, publicWrite: true, updatedBy: currentUser?.username || "local-user" };
+      if (!isLocalFallbackMode()) securedPayload.sessionToken = requireSession();
+      const result = await postToCloudJsonp(securedPayload);
+      if (!result || result.ok === false) throw new Error(result?.error || "Pending save failed");
+      removePendingWrite(item.id);
+      uploaded += 1;
+    } catch (err) {
+      console.warn("Pending write still waiting", err);
+      const list = getPendingWrites();
+      const found = list.find(x => x.id === item.id);
+      if (found) { found.attempts = Number(found.attempts || 0) + 1; found.reason = err.message || "retry later"; savePendingWrites(list); }
+      break;
+    }
+  }
+  if (uploaded) {
+    finishQuietSync("Pending saves uploaded");
+    if (showToastOnDone) showToast(`${uploaded} pending save(s) uploaded`);
+    await fetchCloudData(false);
+  } else {
+    finishQuietSync("Pending saves waiting");
+  }
+  updateSyncMeta();
 }
 
 
@@ -109,6 +247,7 @@ function startQuietSync(message = "Syncing...") {
     indicator.textContent = "⌛ " + message;
     indicator.className = "sync-text syncing";
   }
+  updateSyncMeta("Syncing");
 }
 
 function finishQuietSync(message = "Connected") {
@@ -117,6 +256,26 @@ function finishQuietSync(message = "Connected") {
     indicator.textContent = "🟢 " + message;
     indicator.className = "sync-text connected";
   }
+  updateSyncMeta(message);
+}
+
+function hasBackendUrl() {
+  const url = String(CLOUD_API_URL || "").trim();
+  return /^https:\/\/script\.google\.com\/macros\/s\/.+\/exec(?:[?#].*)?$/.test(url);
+}
+
+function getBackendUrlFromInputs() {
+  const ids = ["backendUrlInput", "backendUrlInputSidebar", "backendUrlInputLogin"];
+  for (const id of ids) {
+    const el = $(id);
+    const value = String(el?.value || "").trim();
+    if (value) return value;
+  }
+  return String(CLOUD_API_URL || "").trim();
+}
+
+function explainBackendUrl() {
+  return "Paste the Google Apps Script Web App URL ending with /exec. Example: https://script.google.com/macros/s/.../exec";
 }
 
 function hydrateBackendUrlInputs() {
@@ -127,20 +286,63 @@ function hydrateBackendUrlInputs() {
   });
 }
 
-function saveBackendUrl() {
-  // v4.1: the Google Apps Script connection is built into app.js.
-  CLOUD_API_URL = DEFAULT_CLOUD_API_URL;
-  try { localStorage.removeItem("kcb_backend_url"); } catch {}
+async function saveBackendUrl() {
+  const nextUrl = getBackendUrlFromInputs();
+  if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec(?:[?#].*)?$/.test(nextUrl)) {
+    showToast(explainBackendUrl(), "error");
+    const help = $("backendStatusText");
+    if (help) help.textContent = explainBackendUrl();
+    return false;
+  }
+  CLOUD_API_URL = nextUrl.trim();
+  try { localStorage.setItem(BACKEND_URL_KEY, CLOUD_API_URL); } catch {}
   hydrateBackendUrlInputs();
-  showToast("Using built-in Google Sheet connection");
-  testBackendConnection();
+  showToast("Google Sheet URL saved. Testing connection...");
+  const ok = await testBackendConnection();
+  if (ok && currentUser) {
+    await upgradeSessionToBackend(false);
+    await fetchCloudData(false);
+    await flushPendingWrites(true);
+  }
+  return ok;
+}
+
+function clearBackendUrl() {
+  CLOUD_API_URL = DEFAULT_CLOUD_API_URL || "";
+  try { localStorage.removeItem(BACKEND_URL_KEY); } catch {}
+  lastCloudReadOk = false;
+  hydrateBackendUrlInputs();
+  updateSyncMeta("Sheet URL missing");
+  showToast("Google Sheet URL cleared", "warn");
+}
+
+async function uploadPendingNow() {
+  if (!currentUser) return showToast("Login first", "error");
+  if (!hasBackendUrl()) {
+    openBackendSettings();
+    return showToast("Paste Apps Script /exec URL first", "error");
+  }
+  await testBackendConnection();
+  await upgradeSessionToBackend(false);
+  await flushPendingWrites(true);
+  await fetchCloudData(false);
 }
 
 async function testBackendConnection() {
+  if (!hasBackendUrl()) {
+    lastCloudReadOk = false;
+    finishQuietSync("Sheet URL missing");
+    updateSyncMeta("Sheet URL missing");
+    const help = $("backendStatusText");
+    if (help) help.textContent = explainBackendUrl();
+    return false;
+  }
   try {
     startQuietSync("Testing Google Sheet connection...");
     const health = await apiGet("health", { t: Date.now() });
     if (health && health.ok) {
+      lastCloudReadOk = true;
+      lastSyncAt = Date.now();
       finishQuietSync("Connected to Google Sheet");
       showToast("Google Sheet connection working");
       const help = $("backendStatusText");
@@ -149,7 +351,9 @@ async function testBackendConnection() {
     }
     throw new Error(health?.error || "Backend health check failed");
   } catch (err) {
+    lastCloudReadOk = false;
     finishQuietSync("Google Sheet not connected");
+    updateSyncMeta("Sheet not connected");
     const msg = err.message || "Connection failed";
     showToast(msg, "error");
     const help = $("backendStatusText");
@@ -198,7 +402,7 @@ function authMode() {
 }
 
 function isLocalFallbackMode() {
-  return authMode() === "local";
+  return authMode() === "local" || authMode() === "publicCloud";
 }
 
 function backendAuthParams() {
@@ -229,8 +433,88 @@ function localFallbackLogin(username) {
   return true;
 }
 
-function apiGet(action, params = {}) {
+// v6.1 GitHub bridge: avoids fetch/CORS and avoids URL-length problems.
+// GitHub page stays as the app. A hidden Apps Script iframe performs Sheet work using google.script.run.
+let kcbBridgeFrame = null;
+let kcbBridgeReady = false;
+let kcbBridgeLoading = null;
+const kcbBridgePending = new Map();
+
+function getBridgeUrl() {
+  if (!hasBackendUrl()) return "";
+  const sep = CLOUD_API_URL.includes("?") ? "&" : "?";
+  return CLOUD_API_URL + sep + "mode=bridge&v=6.1&parentOrigin=" + encodeURIComponent(location.origin || "*");
+}
+
+function ensureBridgeFrame() {
+  if (!hasBackendUrl()) return Promise.reject(new Error("Apps Script /exec URL is not set."));
+  if (kcbBridgeReady && kcbBridgeFrame && document.body.contains(kcbBridgeFrame)) return Promise.resolve(true);
+  if (kcbBridgeLoading) return kcbBridgeLoading;
+
+  kcbBridgeLoading = new Promise((resolve, reject) => {
+    const existing = document.getElementById("kcbAppsScriptBridge");
+    if (existing) existing.remove();
+
+    kcbBridgeReady = false;
+    const frame = document.createElement("iframe");
+    frame.id = "kcbAppsScriptBridge";
+    frame.title = "KCB Google Sheet Bridge";
+    frame.setAttribute("aria-hidden", "true");
+    frame.style.cssText = "position:fixed;width:1px;height:1px;left:-9999px;top:-9999px;border:0;opacity:0;pointer-events:none;";
+    frame.src = getBridgeUrl();
+    kcbBridgeFrame = frame;
+
+    const timer = setTimeout(() => {
+      kcbBridgeLoading = null;
+      reject(new Error("Google Sheet bridge did not load. Redeploy Code.gs v6.1 as Web App: Execute as Me, Access Anyone."));
+    }, 18000);
+
+    function onMessage(event) {
+      const msg = event.data || {};
+      if (!msg || msg.kcbBridge !== true || msg.type !== "ready") return;
+      clearTimeout(timer);
+      window.removeEventListener("message", onMessage);
+      kcbBridgeReady = true;
+      kcbBridgeLoading = null;
+      resolve(true);
+    }
+
+    window.addEventListener("message", onMessage);
+    document.body.appendChild(frame);
+  });
+
+  return kcbBridgeLoading;
+}
+
+window.addEventListener("message", event => {
+  const msg = event.data || {};
+  if (!msg || msg.kcbRpcResponse !== true || !msg.id) return;
+  const pending = kcbBridgePending.get(msg.id);
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  kcbBridgePending.delete(msg.id);
+  if (msg.ok === false) pending.reject(new Error(msg.error || "Google Sheet bridge error"));
+  else pending.resolve(msg.data || msg.result || {});
+});
+
+function bridgeCall(action, params = {}, timeoutMs = 30000) {
+  return ensureBridgeFrame().then(() => new Promise((resolve, reject) => {
+    const id = "rpc_" + Date.now() + "_" + Math.floor(Math.random() * 1000000);
+    const timer = setTimeout(() => {
+      kcbBridgePending.delete(id);
+      reject(new Error("Google Sheet bridge timeout"));
+    }, timeoutMs);
+    kcbBridgePending.set(id, { resolve, reject, timer });
+    kcbBridgeFrame.contentWindow.postMessage({ kcbRpc: true, id, action, params }, "*");
+  }));
+}
+
+function apiGetJsonp(action, params = {}) {
   return new Promise((resolve, reject) => {
+    if (!hasBackendUrl()) {
+      reject(new Error("Google Sheet URL is not set. Paste your Apps Script /exec URL in Connect Sheet."));
+      return;
+    }
     const cb = "kcb_api_" + Date.now() + "_" + Math.floor(Math.random() * 100000);
     const script = document.createElement("script");
     const query = new URLSearchParams({ action, callback: cb, ...params });
@@ -239,8 +523,8 @@ function apiGet(action, params = {}) {
     const timer = setTimeout(() => {
       if (done) return;
       cleanup();
-      reject(new Error("Backend did not respond. Check Apps Script /exec URL and deployment."));
-    }, 9000);
+      reject(new Error("Backend JSONP did not respond."));
+    }, 15000);
 
     window[cb] = data => {
       done = true;
@@ -251,7 +535,7 @@ function apiGet(action, params = {}) {
     script.onerror = () => {
       if (done) return;
       cleanup();
-      reject(new Error("Unable to connect to built-in Apps Script backend. Redeploy Web App with access set to Anyone."));
+      reject(new Error("Cloud script did not return JSONP."));
     };
 
     function cleanup() {
@@ -264,6 +548,25 @@ function apiGet(action, params = {}) {
     document.body.appendChild(script);
   });
 }
+
+function apiGet(action, params = {}) {
+  // Bridge is primary. JSONP remains as fallback for older deployments.
+  return bridgeCall(action, params).catch(err => {
+    console.warn("Bridge call failed, trying JSONP fallback:", action, err);
+    return apiGetJsonp(action, params);
+  });
+}
+
+window.kcbTestCloudBridge = async function() {
+  try {
+    const health = await bridgeCall("health", { t: Date.now() }, 20000);
+    console.log("KCB bridge health", health);
+    alert("Bridge working: " + (health.spreadsheetUrl || health.storage || "Google Sheet connected"));
+  } catch (err) {
+    console.error(err);
+    alert("Bridge failed: " + (err.message || err));
+  }
+};
 
 function showLoginHelp(message) {
   let box = document.getElementById("loginErrorBox");
@@ -279,6 +582,46 @@ function showLoginHelp(message) {
 async function checkBackendHealth() {
   const data = await apiGet("health", { t: Date.now() });
   return data;
+}
+
+function withTimeout(promise, ms, message = "Timed out") {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), ms);
+    })
+  ]).finally(() => clearTimeout(timer));
+}
+
+async function backendLogin(username) {
+  const data = await apiGet("login", { username, t: Date.now() });
+  if (!data || data.ok === false || !data.token) {
+    throw new Error(data?.error || "Backend login failed");
+  }
+  currentUser = {
+    username: String(data.user?.username || username || "user").toLowerCase(),
+    role: data.user?.role === "admin" ? "admin" : "user",
+    token: data.token,
+    authMode: "backend"
+  };
+  localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
+  return currentUser;
+}
+
+async function upgradeSessionToBackend(showToastOnDone = false) {
+  if (!currentUser || !isLocalFallbackMode()) return false;
+  const username = currentUser.username;
+  try {
+    await withTimeout(backendLogin(username), 5000, "Backend login timeout");
+    applyAccessControl();
+    finishQuietSync("Connected to Google Sheet");
+    if (showToastOnDone) showToast("Connected to Google Sheet");
+    return true;
+  } catch (err) {
+    console.warn("Backend session upgrade failed", err);
+    return false;
+  }
 }
 
 function requireSession() {
@@ -318,6 +661,7 @@ function applyAccessControl() {
   if ($("sidebarUserName")) $("sidebarUserName").textContent = name;
   if ($("sidebarUserRole")) $("sidebarUserRole").textContent = role;
   if (isAdmin()) refreshUserList(false);
+  updateSyncMeta();
 }
 
 async function loginUser(username) {
@@ -328,46 +672,26 @@ async function loginUser(username) {
     showLoginHelp("");
     showLoading("Opening ledger...");
 
-    try {
-      const health = await checkBackendHealth();
-      if (health && health.ok && String(health.storage || "").toLowerCase().includes("sheet")) {
-        // v4.3: username-only login. Backend creates/uses a session without checking any password.
-        const data = await apiGet("login", { username });
-        hideLoading("Ready");
+    // v5.4: do not block login on backend token/CORS.
+    // Login is username-only. The app opens immediately, then reads/writes Google Sheet through public JSONP endpoints.
+    currentUser = {
+      username,
+      role: username === "admin" ? "admin" : "user",
+      token: "public-" + Date.now(),
+      authMode: "publicCloud"
+    };
+    localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
 
-        if (data && data.ok) {
-          currentUser = {
-            username: data.user.username,
-            role: data.user.role,
-            token: data.token,
-            authMode: "backend"
-          };
-
-          localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
-          document.body.classList.remove("auth-locked");
-          const box = document.getElementById("loginErrorBox");
-          if (box) box.innerHTML = "";
-          applyAccessControl();
-          switchTab(isAdmin() ? "dashboard" : "logentry");
-          fetchCloudData(false);
-          showToast(`Welcome ${currentUser.username}`);
-          return true;
-        }
-
-        showLoginHelp(`<b>${escapeHTML(data.error || "Unable to login")}</b><br><br>No password is required. Enter <code>admin</code> for full access or any staff name for entry access.`);
-        showToast(data.error || "Unable to login", "error");
-        return false;
-      }
-    } catch (backendErr) {
-      console.warn("Backend login unavailable", backendErr);
-    }
-
+    document.body.classList.remove("auth-locked");
+    applyAccessControl();
+    switchTab(isAdmin() ? "dashboard" : "logentry");
     hideLoading("Ready");
+    showToast(`Welcome ${currentUser.username}`);
 
-    showLoginHelp(`<b>Google Sheet backend is not connected.</b><br>No-password login needs the Apps Script backend to create a shared session.<br><br><b>Fix:</b> In your old Google Sheet open <code>Extensions → Apps Script</code>, paste the latest <code>Code.gs</code>, then <code>Deploy → Manage deployments → Edit → New version → Deploy</code> with access set to <code>Anyone</code>.`);
-    finishQuietSync("Google Sheet not connected");
-    showToast("Google Sheet backend not connected", "error");
-    return false;
+    fetchCloudData(false).then(() => {
+      if (lastCloudReadOk && getPendingWrites().length) flushPendingWrites(false);
+    });
+    return true;
   } catch (err) {
     hideLoading("Login failed");
     const msg = escapeHTML(err.message || "Login failed");
@@ -392,17 +716,13 @@ async function logoutUser(callBackend = true) {
 function restoreLogin() {
   try {
     const saved = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
-    // v4.2: clear old LOCAL sessions. They were the reason mobile and desktop did not share data/users.
-    if (saved?.authMode === "local" || String(saved?.token || "").startsWith("local-")) {
-      localStorage.removeItem(SESSION_KEY);
-      localStorage.removeItem("kcb_backup");
-      document.body.classList.add("auth-locked");
-      return false;
-    }
+    // v5.4: keep username-only sessions. Backend token is not required for Sheet sync.
     if (saved?.username && saved?.role && saved?.token) {
+      if (saved.authMode === "local") saved.authMode = "publicCloud";
       currentUser = saved;
       document.body.classList.remove("auth-locked");
       applyAccessControl();
+      setTimeout(() => fetchCloudData(false), 300);
       return true;
     }
   } catch {}
@@ -525,6 +845,14 @@ function switchTab(tabName) {
 
 async function fetchCloudData(showToastOnDone = true) {
   if (!currentUser) return;
+  if (!hasBackendUrl()) {
+    lastCloudReadOk = false;
+    loadLocalBackup(false);
+    finishQuietSync("This device mode - Sheet URL missing");
+    updateSyncMeta("Sheet URL missing");
+    if (showToastOnDone) showToast("Google Sheet URL missing. Tap Connect Sheet and paste the /exec URL.", "warn");
+    return;
+  }
   startQuietSync("Syncing with Google Sheet...");
 
   const attempts = [];
@@ -542,7 +870,10 @@ async function fetchCloudData(showToastOnDone = true) {
       if (data && (data.vehicles || data.transactions || data.ok)) {
         if (data.ok === false && data.error) throw new Error(data.error);
         applyCloudData(data);
-        finishQuietSync(isLocalFallbackMode() ? "Local mode - backend unavailable" : "Connected to Google Sheet");
+        lastCloudReadOk = true;
+        lastSyncAt = Date.now();
+        finishQuietSync("Connected to Google Sheet");
+        if (getPendingWrites().length) setTimeout(() => flushPendingWrites(false), 600);
         if (showToastOnDone) showToast("Synced from Google Sheet");
         return;
       }
@@ -551,11 +882,20 @@ async function fetchCloudData(showToastOnDone = true) {
     }
   }
 
+  if (isLocalFallbackMode()) {
+    loadLocalBackup(false);
+    finishQuietSync("This device mode - Sheet not connected");
+    updateSyncMeta("Device mode");
+    if (showToastOnDone) {
+      showToast("Google Sheet not connected. Using this-device data.", "warn");
+    }
+    return;
+  }
+
+  lastCloudReadOk = false;
   finishQuietSync("Google Sheet not connected");
-  // v4.2: do not silently show this-device backup. That made mobile/desktop look different.
-  vehicles = {};
-  transactions = [];
-  renderAll();
+  updateSyncMeta("Sheet not connected");
+  loadLocalBackup(false);
   if (showToastOnDone) {
     showToast("Could not sync Google Sheet. Redeploy Apps Script Web App with access = Anyone.", "error");
   }
@@ -601,16 +941,18 @@ function legacyJsonpGetData() {
 function applyCloudData(data) {
   vehicles = data?.vehicles || {};
   transactions = Array.isArray(data?.transactions) ? data.transactions : [];
-  transactions = transactions.map(normalizeTx).sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
-  localStorage.setItem("kcb_backup", JSON.stringify({ vehicles, transactions }));
+  transactions = transactions.map(normalizeTx).sort((a,b) => Number(b.timestamp || 0) - Number(a.timestamp || 0));
+  localStorage.setItem(BACKUP_KEY, JSON.stringify({ vehicles, transactions }));
+  reapplyPendingWritesToView();
   renderAll();
+  updateSyncMeta("Connected");
 }
 
 function loadLocalBackup(showMessage = true) {
   try {
-    const data = JSON.parse(localStorage.getItem("kcb_backup") || "{}");
+    const data = JSON.parse(localStorage.getItem(BACKUP_KEY) || "{}");
     vehicles = data.vehicles || {};
-    transactions = data.transactions || [];
+    transactions = (data.transactions || []).map(normalizeTx);
     renderAll();
     if (showMessage && (transactions.length || Object.keys(vehicles).length)) showToast("Loaded this device backup", "warn");
   } catch {}
@@ -618,7 +960,7 @@ function loadLocalBackup(showMessage = true) {
 
 function normalizeTx(tx) {
   return {
-    id: Number(tx.id || Date.now() + Math.random()),
+    id: String(tx.id || generateId()),
     timestamp: Number(tx.timestamp || Date.now()),
     datetimeStr: tx.datetimeStr || cleanFormatDate(tx.timestamp),
     vehicle: String(tx.vehicle || ""),
@@ -630,31 +972,51 @@ function normalizeTx(tx) {
 }
 
 async function postToCloud(payload, options = {}) {
-  const { refreshData = true, successMessage = "Saved successfully" } = options;
-  const securedPayload = isLocalFallbackMode()
-    ? { ...payload, publicWrite: true, updatedBy: currentUser?.username || "local-user" }
-    : { ...payload, sessionToken: requireSession() };
+  const { refreshData = true, successMessage = "Saved successfully", applyLocal = true } = options;
+  const securedPayload = {
+    ...payload,
+    publicWrite: true,
+    updatedBy: currentUser?.username || "local-user"
+  };
+  if (!isLocalFallbackMode()) securedPayload.sessionToken = requireSession();
 
-  // Show the change immediately on this device, but always send it to Google Sheet too.
-  // After the Sheet write, we sync again so mobile and desktop match.
-  if (isLocalFallbackMode()) applyLocalWrite(payload);
+  // Premium stable flow: update UI instantly, then verify Sheet save.
+  // If Sheet is offline or not connected, the exact write is queued and retried later with the same ID.
+  if (applyLocal) applyLocalWrite(payload);
+
+  if (!hasBackendUrl()) {
+    queuePendingWrite(payload, "sheet url missing");
+    finishQuietSync("Saved here - Connect Sheet to upload");
+    showToast("Saved on this device. Connect Google Sheet to upload pending data.", "warn");
+    return;
+  }
+
+  if (!navigator.onLine) {
+    queuePendingWrite(payload, "offline");
+    finishQuietSync("Offline - queued safely");
+    showToast("Saved on this device and queued for Google Sheet sync", "warn");
+    return;
+  }
 
   startQuietSync("Saving to Google Sheet...");
-  showToast("Saving to Google Sheet...", "warn");
 
   try {
-    await postToCloudForm(securedPayload);
-    finishQuietSync("Saved to Google Sheet");
-    showToast(successMessage + " — syncing other devices...");
-    if (refreshData) setTimeout(() => fetchCloudData(false), 2500);
+    const result = await postToCloudJsonp(securedPayload);
+    if (!result || result.ok === false) throw new Error(result?.error || "Google Sheet write failed");
+    lastCloudReadOk = true;
+    finishQuietSync(result.message || "Saved to Google Sheet");
+    showToast(successMessage);
+    if (refreshData) setTimeout(() => fetchCloudData(false), 900);
+    if (getPendingWrites().length) setTimeout(() => flushPendingWrites(false), 1400);
   } catch (err) {
     console.warn("Google Sheet write failed", err);
-    finishQuietSync("Google Sheet save failed");
-    showToast("Not saved. Google Sheet backend is not connected. Check Apps Script deployment.", "error");
+    queuePendingWrite(payload, err.message || "write failed");
+    finishQuietSync("Saved here - Sheet pending");
+    showToast("Saved on this device. Google Sheet sync is pending.", "warn");
   }
 }
 
-function applyLocalWrite(payload) {
+function applyLocalWrite(payload, options = {}) {
   try {
     if (payload.action === "saveVehicle") {
       const vehicle = String(payload.vehicle || "").trim().toUpperCase();
@@ -668,18 +1030,23 @@ function applyLocalWrite(payload) {
       };
     } else if (payload.action === "addTx" && payload.tx) {
       const tx = normalizeTx(payload.tx);
-      const index = transactions.findIndex(t => Number(t.id) === Number(tx.id));
+      const index = transactions.findIndex(t => String(t.id) === String(tx.id));
       if (index >= 0) transactions[index] = tx;
       else transactions.unshift(tx);
       transactions.sort((a,b) => Number(b.timestamp || 0) - Number(a.timestamp || 0));
     } else if (payload.action === "deleteTx") {
-      transactions = transactions.filter(t => Number(t.id) !== Number(payload.id));
+      transactions = transactions.filter(t => String(t.id) !== String(payload.id));
     }
-    localStorage.setItem("kcb_backup", JSON.stringify({ vehicles, transactions }));
-    renderAll();
+    localStorage.setItem(BACKUP_KEY, JSON.stringify({ vehicles, transactions }));
+    if (!options.silent) renderAll();
   } catch (err) {
     console.warn("Local write failed", err);
   }
+}
+
+function postToCloudJsonp(payload) {
+  // v4.8: verified write. Apps Script returns ok/error through JSONP so edits cannot silently fail.
+  return apiGet("writePublic", { payload: JSON.stringify(payload), t: Date.now() });
 }
 
 function postToCloudForm(payload) {
@@ -746,6 +1113,8 @@ function renderAll() {
   renderDetailedDistributorReport();
   updateTodaySummary();
   updateFleetSummary();
+  renderPremiumInsights();
+  updateSyncMeta();
 }
 
 function getLedger() {
@@ -759,19 +1128,92 @@ function getLedger() {
   return ledger;
 }
 
+function vehicleSearchText(vehicleNo) {
+  const item = vehicles[vehicleNo] || {};
+  return `${vehicleNo} ${item.distributorName || ""} ${item.distributorPhone || ""}`.toLowerCase();
+}
+
+function vehicleOptionText(vehicleNo) {
+  const item = vehicles[vehicleNo] || {};
+  return `${vehicleNo} [${item.distributorName || "N/A"}] (${formatINR(item.rate)}/jar)`;
+}
+
+function renderTxVehicleOptions() {
+  const select = $("txVehicle");
+  if (!select) return;
+
+  const oldValue = select.value;
+  const keyword = ($("txVehicleSearch")?.value || "").toLowerCase().trim();
+  const keys = Object.keys(vehicles)
+    .filter(v => !keyword || vehicleSearchText(v).includes(keyword))
+    .sort();
+
+  const placeholder = keyword
+    ? `-- ${keys.length} matching vehicle(s) --`
+    : "-- Choose Registered Vehicle --";
+  select.innerHTML = `<option value="" disabled selected>${placeholder}</option>`;
+
+  keys.forEach(v => {
+    const opt = document.createElement("option");
+    opt.value = v;
+    opt.textContent = vehicleOptionText(v);
+    select.appendChild(opt);
+  });
+
+  if (oldValue && keys.includes(oldValue)) {
+    select.value = oldValue;
+  } else if (keyword) {
+    const exact = keys.find(v => v.toLowerCase() === keyword || (vehicles[v]?.distributorName || "").toLowerCase() === keyword);
+    if (exact) select.value = exact;
+    else if (keys.length === 1) select.value = keys[0];
+  }
+}
+
+function refreshTxVehicleSearchList() {
+  const list = $("txVehicleSearchList");
+  if (!list) return;
+  list.innerHTML = "";
+  Object.keys(vehicles).sort().forEach(v => {
+    const item = vehicles[v] || {};
+    const opt = document.createElement("option");
+    opt.value = v;
+    opt.label = `${item.distributorName || "N/A"} • ${formatINR(item.rate)}/jar`;
+    list.appendChild(opt);
+  });
+}
+
+function onTxVehicleSearchInput() {
+  const input = $("txVehicleSearch");
+  const value = (input?.value || "").trim().toUpperCase();
+  const select = $("txVehicle");
+
+  renderTxVehicleOptions();
+
+  if (value && vehicles[value] && select) {
+    select.value = value;
+  }
+}
+
+function onTxVehicleSelectChange() {
+  const select = $("txVehicle");
+  const input = $("txVehicleSearch");
+  if (!select || !input || !select.value) return;
+  input.value = select.value;
+}
+
+function clearTxVehicleSearch() {
+  if ($("txVehicleSearch")) $("txVehicleSearch").value = "";
+  renderTxVehicleOptions();
+}
+
 function renderDropdowns() {
   const txVehicleOld = $("txVehicle")?.value;
   const reportOld = $("reportFilterDistributor")?.value || "all";
   const statementOld = $("statementDistributor")?.value || "all";
   const distributors = [...new Set(Object.values(vehicles).map(v => v.distributorName).filter(Boolean))].sort();
 
-  $("txVehicle").innerHTML = '<option value="" disabled selected>-- Choose Registered Vehicle --</option>';
-  Object.keys(vehicles).sort().forEach(v => {
-    const opt = document.createElement("option");
-    opt.value = v;
-    opt.textContent = `${v} [${vehicles[v].distributorName || "N/A"}] (${formatINR(vehicles[v].rate)}/jar)`;
-    $("txVehicle").appendChild(opt);
-  });
+  refreshTxVehicleSearchList();
+  renderTxVehicleOptions();
   if (vehicles[txVehicleOld]) $("txVehicle").value = txVehicleOld;
 
   ["reportFilterDistributor", "statementDistributor"].forEach(id => {
@@ -847,7 +1289,7 @@ function renderDashboardSummary() {
   Object.values(ledger).sort((a,b) => a.dist.localeCompare(b.dist)).forEach(r => {
     const due = r.bill - r.paid;
     totalJars += r.jars; totalBill += r.bill; totalPaid += r.paid;
-    body.insertAdjacentHTML("beforeend", `<tr onclick="selectDistributor('${escapeHTML(r.dist)}')"><td><b>${escapeHTML(r.dist)}</b></td><td>${escapeHTML(r.vehicle)}</td><td class="right">${r.jars}</td><td class="right">${formatINR(r.bill)}</td><td class="right green-text">${formatINR(r.paid)}</td><td class="right" style="color:${due>0?'#ef4444':'#10b981'}"><b>${formatINR(due)}</b></td></tr>`);
+    body.insertAdjacentHTML("beforeend", `<tr onclick="selectDistributor(${quoteArg(r.dist)})"><td><b>${escapeHTML(r.dist)}</b></td><td>${escapeHTML(r.vehicle)}</td><td class="right">${r.jars}</td><td class="right">${formatINR(r.bill)}</td><td class="right green-text">${formatINR(r.paid)}</td><td class="right" style="color:${due>0?'#ef4444':'#10b981'}"><b>${formatINR(due)}</b></td></tr>`);
   });
   if (body.children.length) body.insertAdjacentHTML("beforeend", `<tr><td colspan="2"><b>Grand Total</b></td><td class="right"><b>${totalJars}</b></td><td class="right"><b>${formatINR(totalBill)}</b></td><td class="right"><b>${formatINR(totalPaid)}</b></td><td class="right"><b>${formatINR(totalBill-totalPaid)}</b></td></tr>`);
 }
@@ -857,6 +1299,7 @@ function selectDistributor(dist) {
   if (dist && dist !== "N/A") {
     $("reportFilterDistributor").value = dist;
     $("statementDistributor").value = dist;
+    if ($("statementSearch")) $("statementSearch").value = "";
   }
   onDistributorFilterChange();
   switchTab("statement");
@@ -889,10 +1332,13 @@ function getStatementPeriod() {
 function txMatchesStatementFilters(tx) {
   const selected = $("statementDistributor")?.value || $("reportFilterDistributor")?.value || "all";
   const dist = vehicles[tx.vehicle]?.distributorName || "N/A";
+  const vehicleNo = String(tx.vehicle || "");
+  const keyword = ($("statementSearch")?.value || "").toLowerCase().trim();
   const period = getStatementPeriod();
   const timestamp = Number(tx.timestamp || 0);
 
   if (selected !== "all" && dist !== selected) return false;
+  if (keyword && !vehicleNo.toLowerCase().includes(keyword) && !dist.toLowerCase().includes(keyword)) return false;
   if (period.from !== null && timestamp < period.from) return false;
   if (period.to !== null && timestamp > period.to) return false;
 
@@ -910,8 +1356,12 @@ function statementPeriodLabel() {
 function clearStatementPeriod() {
   if ($("statementFromDate")) $("statementFromDate").value = "";
   if ($("statementToDate")) $("statementToDate").value = "";
+  if ($("statementSearch")) $("statementSearch").value = "";
+  if ($("statementDistributor")) $("statementDistributor").value = "all";
+  if ($("reportFilterDistributor")) $("reportFilterDistributor").value = "all";
+  calculateReports();
   renderDetailedDistributorReport();
-  showToast("Statement period cleared");
+  showToast("Statement filters cleared");
 }
 
 function getFilteredStatementTransactions() {
@@ -970,7 +1420,7 @@ function renderAuditTrail() {
   body.innerHTML = "";
   filtered.forEach(t => {
     const dist = vehicles[t.vehicle]?.distributorName || "N/A";
-    const actions = isAdmin() ? `<button class="btn btn-secondary" onclick="inlineEditTx(${t.id})">Edit</button> <button class="btn btn-red" onclick="deleteTx(${t.id})">Delete</button>` : `<span class="badge">View only</span>`;
+    const actions = isAdmin() ? `<button class="btn btn-secondary" onclick="inlineEditTx(${quoteArg(t.id)})">Edit</button> <button class="btn btn-red" onclick="deleteTx(${quoteArg(t.id)})">Delete</button>` : `<span class="badge">View only</span>`;
     body.insertAdjacentHTML("beforeend", `<tr><td>${cleanFormatDate(t.timestamp)}</td><td><b>${escapeHTML(t.vehicle)}</b><br><small>${escapeHTML(dist)}</small></td><td>${t.type === "load" ? '<span class="badge badge-load">LOAD</span>' : '<span class="badge badge-payment">PAYMENT</span>'}</td><td class="right">${t.jars || "-"}</td><td class="right">${t.rateApplied ? formatINR(t.rateApplied) : "-"}</td><td class="right"><b>${formatINR(t.financialValue)}</b></td><td class="center">${actions}</td></tr>`);
   });
   $("recordCount").textContent = filtered.length;
@@ -983,15 +1433,18 @@ function setEntryType(type) {
   $("tabPayment").classList.toggle("active", type === "payment");
   $("divJarInput").classList.toggle("hidden", type !== "load");
   $("divPaymentInput").classList.toggle("hidden", type !== "payment");
-  $("txSubmitBtn").textContent = type === "load" ? "Submit Load" : "Submit Payment";
+  const editing = !!$("txForm")?.dataset?.editId;
+  $("txSubmitBtn").textContent = editing ? "Update Transaction" : (type === "load" ? "Submit Load" : "Submit Payment");
 }
 
 function inlineEditTx(id) {
   if (!isAdmin()) return showToast("Only admin can edit old transactions", "error");
-  const tx = transactions.find(t => Number(t.id) === Number(id));
+  const tx = transactions.find(t => String(t.id) === String(id));
   if (!tx) return;
   switchTab("logentry");
   setEntryType(tx.type);
+  if ($("txVehicleSearch")) $("txVehicleSearch").value = tx.vehicle;
+  renderTxVehicleOptions();
   $("txVehicle").value = tx.vehicle;
   const d = new Date(tx.timestamp); const offset = d.getTimezoneOffset() * 60000;
   $("txDateTime").value = new Date(d.getTime() - offset).toISOString().slice(0,16);
@@ -999,12 +1452,13 @@ function inlineEditTx(id) {
   $("txAmount").value = tx.type === "payment" ? tx.financialValue : "";
   $("txForm").dataset.editId = tx.id;
   $("txFormTitle").textContent = "✏️ Edit Transaction";
+  if ($("editModeBanner")) $("editModeBanner").classList.remove("hidden");
   window.scrollTo({top:0,behavior:"smooth"});
 }
 
 function deleteTx(id) {
   if (!isAdmin()) return showToast("Only admin can delete transactions", "error");
-  if (confirm("Delete this transaction?")) postToCloud({ action:"deleteTx", id:Number(id) });
+  if (confirm("Delete this transaction from app and Google Sheet?")) postToCloud({ action:"deleteTx", id:String(id) }, { successMessage:"Transaction deleted" });
 }
 
 function updateTodaySummary() {
@@ -1030,6 +1484,55 @@ function updateFleetSummary() {
   if ($("distributorCount")) $("distributorCount").textContent = distSet.size;
   if ($("avgRate")) $("avgRate").textContent = formatINR(avg);
 }
+
+function renderPremiumInsights() {
+  const today = new Date().toDateString();
+  let todayJars = 0, todayPayments = 0, todayNet = 0;
+  transactions.forEach(t => {
+    if (new Date(Number(t.timestamp || 0)).toDateString() !== today) return;
+    if (t.type === "load") { todayJars += Number(t.jars || 0); todayNet += Number(t.financialValue || 0); }
+    else { todayPayments += Number(t.financialValue || 0); todayNet -= Number(t.financialValue || 0); }
+  });
+  if ($("highTodayJars")) $("highTodayJars").textContent = todayJars;
+  if ($("highTodayPayments")) $("highTodayPayments").textContent = formatINR(todayPayments);
+  if ($("highTodayNet")) $("highTodayNet").textContent = formatINR(todayNet);
+
+  const wrap = $("highTopOutstanding");
+  if (wrap) {
+    const rows = Object.values(getLedger())
+      .map(r => ({ ...r, due: Number(r.bill || 0) - Number(r.paid || 0) }))
+      .filter(r => r.due > 0)
+      .sort((a,b) => b.due - a.due)
+      .slice(0, 5);
+    wrap.innerHTML = rows.length ? "" : `<div class="empty compact">No outstanding dues.</div>`;
+    rows.forEach(r => wrap.insertAdjacentHTML("beforeend", `<button class="priority-item" onclick="selectDistributor(${quoteArg(r.dist)})"><span><b>${escapeHTML(r.dist)}</b><small>${escapeHTML(r.vehicle)}</small></span><strong>${formatINR(r.due)}</strong></button>`));
+  }
+  updateSyncMeta();
+}
+
+function setStatementQuickPeriod(type) {
+  const now = new Date();
+  const yyyyMmDd = d => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  let from = new Date(now);
+  if (type === "today") from = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  else if (type === "week") from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6);
+  else if (type === "month") from = new Date(now.getFullYear(), now.getMonth(), 1);
+  if ($("statementFromDate")) $("statementFromDate").value = yyyyMmDd(from);
+  if ($("statementToDate")) $("statementToDate").value = yyyyMmDd(now);
+  renderDetailedDistributorReport();
+}
+
+function cancelTxEdit() {
+  const form = $("txForm");
+  if (!form) return;
+  form.reset();
+  delete form.dataset.editId;
+  clearTxVehicleSearch();
+  setEntryType("load");
+  if ($("txFormTitle")) $("txFormTitle").textContent = "📝 New Transaction";
+  if ($("editModeBanner")) $("editModeBanner").classList.add("hidden");
+}
+
 
 function renderVehicleRatesList() {
   const wrap = $("vehicleRatesList");
@@ -1148,26 +1651,38 @@ function bindForms() {
     const amount = currentEntryType === "load" ? jars * rate : Number($("txAmount").value);
     if (currentEntryType === "load" && jars <= 0) return showToast("Enter jar quantity", "error");
     if (currentEntryType === "payment" && amount <= 0) return showToast("Enter payment amount", "error");
-    const tx = { id: $("txForm").dataset.editId ? Number($("txForm").dataset.editId) : Date.now(), timestamp, datetimeStr: cleanFormatDate(timestamp), vehicle, type:currentEntryType, jars, rateApplied: currentEntryType === "load" ? rate : 0, financialValue: amount, submittedBy: currentUser?.username || "unknown" };
-    postToCloud({ action:"addTx", tx });
-    $("txForm").reset();
-    delete $("txForm").dataset.editId;
-    $("txFormTitle").textContent = "📝 New Transaction";
-    setEntryType("load");
+    const tx = { id: $("txForm").dataset.editId ? String($("txForm").dataset.editId) : generateId(), timestamp, datetimeStr: cleanFormatDate(timestamp), vehicle, type:currentEntryType, jars, rateApplied: currentEntryType === "load" ? rate : 0, financialValue: amount, submittedBy: currentUser?.username || "unknown" };
+    postToCloud({ action:"addTx", tx }, { successMessage: $("txForm").dataset.editId ? "Transaction updated" : "Transaction saved" });
+    cancelTxEdit();
   });
 }
 
-window.addEventListener("online", () => showToast("Internet connected"));
+
+function installPwa() {
+  if (!deferredInstallPrompt) return showToast("Install option will appear after opening this app in Chrome/Edge once.", "warn");
+  deferredInstallPrompt.prompt();
+  deferredInstallPrompt.userChoice.finally(() => {
+    deferredInstallPrompt = null;
+    $("installPwaBtn")?.classList.add("hidden");
+  });
+}
+
+window.addEventListener("beforeinstallprompt", e => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  $("installPwaBtn")?.classList.remove("hidden");
+});
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("service-worker.js?v=5.3").catch(err => console.warn("Service worker registration failed", err));
+  });
+}
+
+window.addEventListener("online", () => { showToast("Internet connected"); flushPendingWrites(true); });
 window.addEventListener("offline", () => showToast("Internet disconnected", "error"));
 window.addEventListener("load", () => {
-  // Clear old emergency/local state from earlier packages.
-  try {
-    const oldSession = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
-    if (oldSession?.authMode === "local" || String(oldSession?.token || "").startsWith("local-")) {
-      localStorage.removeItem(SESSION_KEY);
-      localStorage.removeItem("kcb_backup");
-    }
-  } catch {}
+  // v4.5: keep local session and local backup. Do not clear device data on refresh.
   if (localStorage.getItem("kcb_dark") === "true") document.body.classList.add("dark");
   bindForms();
   hydrateBackendUrlInputs();
@@ -1176,6 +1691,9 @@ window.addEventListener("load", () => {
   if (loggedIn) {
     switchTab(isAdmin() ? "dashboard" : "logentry");
     fetchCloudData(false);
+    setTimeout(() => flushPendingWrites(false), 1500);
   }
-  setInterval(() => { if (document.visibilityState === "visible" && currentUser) fetchCloudData(false); }, 120000);
+  updateSyncMeta();
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && currentUser) { fetchCloudData(false); flushPendingWrites(false); } });
+  setInterval(() => { if (document.visibilityState === "visible" && currentUser) fetchCloudData(false); }, 90000);
 });

@@ -1,30 +1,35 @@
-# KCB Minerals Ledger Pro — Simple Login Build
+KCB Minerals Ledger Pro v6.1 - GitHub Bridge Working
 
-This package is changed to **username-only login**. No password is required.
+This version keeps the app on GitHub Pages, but uses a hidden Apps Script iframe bridge for Google Sheet sync.
+It avoids browser CORS, Apps Script redirect and service-worker cache problems.
 
-## Login
+Files for GitHub:
+- index.html
+- app.js
+- style.css
+- service-worker.js
+- manifest.json
+- keep your existing assets/logo.png on GitHub
 
-- Type `admin` for full access: dashboard, statements, export, edit/delete, user management.
-- Type any other name, for example `driver1`, for entry access: registration and log entry.
-- Mobile and desktop both sync through the same Google Sheet backend.
+File for Google Apps Script:
+- Code.gs
 
-## Files
+Apps Script deployment:
+1. Open your Google Sheet.
+2. Extensions -> Apps Script.
+3. Replace Code.gs with the provided Code.gs.
+4. Save.
+5. Deploy -> Manage deployments -> Edit -> New version -> Deploy.
+6. Execute as: Me.
+7. Who has access: Anyone.
+8. Use the same /exec URL already inside app.js.
 
-- `index.html` — app page for GitHub Pages
-- `app.js` — frontend logic
-- `style.css` — design
-- `Code.gs` — Google Apps Script backend for Google Sheet sync
-- `assets/logo.png` — logo
+GitHub deployment:
+1. Upload/replace index.html, app.js, style.css, service-worker.js, manifest.json.
+2. Commit changes.
+3. Open https://kcbminerals.github.io/KCB-Minerals-Ledger/?v=6.1
+4. Hard refresh with Ctrl+Shift+R.
+5. Login admin and press Sync.
 
-## Important setup
-
-1. In your existing Google Sheet, open **Extensions → Apps Script**.
-2. Replace the code with `Code.gs` from this package.
-3. In `Code.gs`, paste your existing Sheet ID in `SPREADSHEET_ID` if the script is not bound to your old Sheet.
-4. Deploy as Web App:
-   - Execute as: **Me**
-   - Who has access: **Anyone**
-5. Copy the `/exec` Web App URL and paste it into `DEFAULT_CLOUD_API_URL` at the top of `app.js`.
-6. Upload `index.html`, `app.js`, `style.css`, and `assets/logo.png` to GitHub Pages.
-
-Version: `4.3-simple-login`
+Debug:
+Open browser console and run: kcbTestCloudBridge()
