@@ -1,15 +1,18 @@
-KCB Minerals Ledger Pro v6.5 - Final GitHub URL Fix
+KCB Minerals Ledger v4.7 - Mobile Layout Fix
 
-This build permanently forces the verified Apps Script URL in app.js:
-https://script.google.com/macros/s/AKfycbwA5eKoBNAbaKix_-cpHoLrfBxwnZzYfnBreUkZRIRjZV6UjLXUq8HA44R_grfd6-qC/exec
+Changes:
+- Mobile sidebar changed into bottom navigation.
+- Log Entry, Payment, Statement and Register pages now use one-column mobile layout.
+- Inputs and buttons are larger and easier to tap on phone.
+- Tables scroll horizontally instead of breaking the screen.
+- Statement filters stack properly on mobile.
+- Cache version updated to v4.7.
 
-Upload these files to GitHub repo KCB-Minerals-Ledger-Pro:
-- index.html
-- app.js
-- style.css
-- service-worker.js
-- manifest.json
+Upload to GitHub:
+1. Replace index.html
+2. Replace style.css
+3. Replace app.js
+4. Commit changes
+5. Open the app on mobile and refresh/clear cache.
 
-Then open: https://kcbminerals.github.io/KCB-Minerals-Ledger-Pro/?v=6.5
-
-Do not clear site data before syncing pending entries.
+Google Apps Script is unchanged from v4.6. Use Code.gs only if you want a full backup replacement.
