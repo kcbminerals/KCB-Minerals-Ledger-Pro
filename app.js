@@ -1,5 +1,5 @@
-const DEFAULT_CLOUD_API_URL = "https://script.google.com/macros/library/d/1sspPAEoTO1pQN3yj9NQjNAjInxV-yj2FPZPiRHvWNGjBc46VZVyHnjUX/15"; // v6.3: verified working Apps Script backend URL. Do not replace unless you deploy a new web app.
-const APP_VERSION = "6.4-force-correct-sheet-url";
+const DEFAULT_CLOUD_API_URL = "https://script.google.com/macros/s/AKfycbwA5eKoBNAbaKix_-cpHoLrfBxwnZzYfnBreUkZRIRjZV6UjLXUq8HA44R_grfd6-qC/exec"; // v6.5: forced working Apps Script /exec URL.
+const APP_VERSION = "6.5-force-url-final";
 const FORCE_BACKEND_MODE = false; // GitHub version: username-only login; Sheet sync via hidden Apps Script bridge.
 // v5.1: adds in-app Google Sheet connection setup, remembers the Apps Script URL, and uploads pending saves after connection.
 // Login remains username-only. Google Sheet is the shared source of truth when Apps Script is correctly deployed.
@@ -37,19 +37,16 @@ let CLOUD_API_URL = (() => {
 // v6.4 final fix: never allow the GitHub app to run without the verified Apps Script URL.
 // This preserves pending browser entries and makes Sync use the correct /exec endpoint.
 function ensureCloudUrl() {
-  const verifiedUrl = String(DEFAULT_CLOUD_API_URL || "").trim();
-  const validExecUrl = value => /^https:\/\/script\.google\.com\/macros\/s\/.+\/exec(?:[?#].*)?$/.test(String(value || "").trim());
-  if (!validExecUrl(String(CLOUD_API_URL || "").trim()) && validExecUrl(verifiedUrl)) {
-    CLOUD_API_URL = verifiedUrl;
-  }
+  // FINAL FIX: never read a blank/old URL from browser storage.
+  // The app always uses the verified Apps Script Web App URL below.
+  const verifiedUrl = "https://script.google.com/macros/s/AKfycbwA5eKoBNAbaKix_-cpHoLrfBxwnZzYfnBreUkZRIRjZV6UjLXUq8HA44R_grfd6-qC/exec";
+  CLOUD_API_URL = verifiedUrl;
   try {
-    if (validExecUrl(verifiedUrl)) {
-      ["kcb_backend_url", "kcb_backend_url_v51", "kcb_backend_url_v52", "kcb_backend_url_v53", "kcb_backend_url_v54"].forEach(k => localStorage.setItem(k, verifiedUrl));
-    }
+    ["kcb_backend_url", "kcb_backend_url_v51", "kcb_backend_url_v52", "kcb_backend_url_v53", "kcb_backend_url_v54", BACKEND_URL_KEY].forEach(k => localStorage.setItem(k, verifiedUrl));
   } catch (err) {
     console.warn("Unable to save verified Apps Script URL", err);
   }
-  return CLOUD_API_URL;
+  return verifiedUrl;
 }
 ensureCloudUrl();
 
@@ -280,18 +277,11 @@ function finishQuietSync(message = "Connected") {
 
 function hasBackendUrl() {
   ensureCloudUrl();
-  const url = String(CLOUD_API_URL || "").trim();
-  return /^https:\/\/script\.google\.com\/macros\/s\/.+\/exec(?:[?#].*)?$/.test(url);
+  return true;
 }
 
 function getBackendUrlFromInputs() {
-  const ids = ["backendUrlInput", "backendUrlInputSidebar", "backendUrlInputLogin"];
-  for (const id of ids) {
-    const el = $(id);
-    const value = String(el?.value || "").trim();
-    if (value) return value;
-  }
-  return String(CLOUD_API_URL || "").trim();
+  return "https://script.google.com/macros/s/AKfycbwA5eKoBNAbaKix_-cpHoLrfBxwnZzYfnBreUkZRIRjZV6UjLXUq8HA44R_grfd6-qC/exec";
 }
 
 function explainBackendUrl() {
@@ -299,8 +289,8 @@ function explainBackendUrl() {
 }
 
 function hydrateBackendUrlInputs() {
-  const current = CLOUD_API_URL || "";
-  ["backendUrlInput", "backendUrlInputSidebar"].forEach(id => {
+  const current = ensureCloudUrl();
+  ["backendUrlInput", "backendUrlInputSidebar", "backendUrlInputLogin"].forEach(id => {
     const el = $(id);
     if (el) el.value = current;
   });
@@ -340,7 +330,7 @@ async function uploadPendingNow() {
   if (!currentUser) return showToast("Login first", "error");
   if (!hasBackendUrl()) {
     openBackendSettings();
-    return showToast("Paste Apps Script /exec URL first", "error");
+    return showToast("Google Sheet URL is fixed. Press Sync again", "error");
   }
   await testBackendConnection();
   await upgradeSessionToBackend(false);
@@ -462,8 +452,9 @@ const kcbBridgePending = new Map();
 
 function getBridgeUrl() {
   if (!hasBackendUrl()) return "";
-  const sep = CLOUD_API_URL.includes("?") ? "&" : "?";
-  return CLOUD_API_URL + sep + "mode=bridge&v=6.2&parentOrigin=" + encodeURIComponent(location.origin || "*");
+  const forcedUrl = ensureCloudUrl();
+  const sep = forcedUrl.includes("?") ? "&" : "?";
+  return forcedUrl + sep + "mode=bridge&v=6.2&parentOrigin=" + encodeURIComponent(location.origin || "*");
 }
 
 function ensureBridgeFrame() {
@@ -530,12 +521,8 @@ function bridgeCall(action, params = {}, timeoutMs = 30000) {
 }
 
 function apiGetJsonp(action, params = {}) {
-  ensureCloudUrl();
+  const forcedUrl = ensureCloudUrl();
   return new Promise((resolve, reject) => {
-    if (!hasBackendUrl()) {
-      reject(new Error("Google Sheet URL is not set. Paste your Apps Script /exec URL in Connect Sheet."));
-      return;
-    }
     const cb = "kcb_api_" + Date.now() + "_" + Math.floor(Math.random() * 100000);
     const script = document.createElement("script");
     const query = new URLSearchParams({ action, callback: cb, ...params });
@@ -565,7 +552,7 @@ function apiGetJsonp(action, params = {}) {
       script.remove();
     }
 
-    script.src = CLOUD_API_URL + (CLOUD_API_URL.includes("?") ? "&" : "?") + query.toString();
+    script.src = forcedUrl + (forcedUrl.includes("?") ? "&" : "?") + query.toString();
     document.body.appendChild(script);
   });
 }
@@ -869,7 +856,7 @@ async function fetchCloudData(showToastOnDone = true) {
     loadLocalBackup(false);
     finishQuietSync("This device mode - Sheet URL missing");
     updateSyncMeta("Sheet URL missing");
-    if (showToastOnDone) showToast("Google Sheet URL missing. Tap Connect Sheet and paste the /exec URL.", "warn");
+    if (showToastOnDone) showToast("Google Sheet URL fixed in app. Press Sync again.", "warn");
     return;
   }
   startQuietSync("Syncing with Google Sheet...");
@@ -951,8 +938,9 @@ function legacyJsonpGetData() {
       script.remove();
     }
 
-    const sep = CLOUD_API_URL.includes("?") ? "&" : "?";
-    script.src = CLOUD_API_URL + sep + "callback=" + encodeURIComponent(cb) + "&t=" + Date.now();
+    const forcedUrl = ensureCloudUrl();
+    const sep = forcedUrl.includes("?") ? "&" : "?";
+    script.src = forcedUrl + sep + "callback=" + encodeURIComponent(cb) + "&t=" + Date.now();
     document.body.appendChild(script);
   });
 }
@@ -1005,7 +993,7 @@ async function postToCloud(payload, options = {}) {
 
   if (!hasBackendUrl()) {
     queuePendingWrite(payload, "sheet url missing");
-    finishQuietSync("Saved here - Connect Sheet to upload");
+    finishQuietSync("Saved here - press Sync to upload");
     showToast("Saved on this device. Connect Google Sheet to upload pending data.", "warn");
     return;
   }
@@ -1076,7 +1064,7 @@ function postToCloudForm(payload) {
 
     const form = document.createElement("form");
     form.method = "POST";
-    form.action = CLOUD_API_URL;
+    form.action = ensureCloudUrl();
     form.target = iframe.name;
 
     const input = document.createElement("input");

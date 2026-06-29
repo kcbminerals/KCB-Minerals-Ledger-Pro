@@ -1,6 +1,6 @@
-const KCB_SW_VERSION = '6.2-github-bridge-no-cache';
-self.addEventListener('install', event => { self.skipWaiting(); });
-self.addEventListener('activate', event => {
-  event.waitUntil(caches.keys().then(keys => Promise.all(keys.map(key => caches.delete(key)))).then(() => self.clients.claim()));
+// v6.5 no-cache service worker for KCB Minerals Ledger Pro
+self.addEventListener("install", event => self.skipWaiting());
+self.addEventListener("activate", event => event.waitUntil(self.clients.claim()));
+self.addEventListener("fetch", event => {
+  event.respondWith(fetch(event.request, { cache: "no-store" }).catch(() => fetch(event.request)));
 });
-self.addEventListener('fetch', event => { event.respondWith(fetch(event.request)); });
